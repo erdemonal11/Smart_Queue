@@ -238,22 +238,11 @@ const AdminDashboard = () => {
 
   const fetchOrganizations = async () => {
     try {
-      // First, check if the admin-specific endpoint exists
-      let response = await fetch('http://localhost:3000/api/organizations/admin', {
+      const response = await fetch('http://localhost:3000/api/organizations/all', {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
       });
-
-      // If the admin endpoint doesn't exist, we need to modify our backend
-      if (response.status === 404) {
-        console.log('Admin endpoint not found, using standard endpoint');
-        response = await fetch('http://localhost:3000/api/organizations', {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
-          }
-        });
-      }
 
       if (response.status === 403) {
         setError('Access denied. Admin privileges required.');
@@ -267,42 +256,21 @@ const AdminDashboard = () => {
       }
 
       const data = await response.json();
-      console.log('ORGANIZATIONS RAW DATA:', data); // Debug log
+      setOrganizations(data);
       
-      // Ensure we're setting ALL organizations
-      if (Array.isArray(data)) {
-        // Force convert any boolean is_active to numbers for consistency
-        const processedData = data.map(org => ({
-          ...org,
-          is_active: org.is_active === true ? 1 : (org.is_active === false ? 0 : org.is_active)
-        }));
-        
-        setOrganizations(processedData);
-        console.log('PROCESSED ORGANIZATIONS:', processedData.length, 'organizations');
-        
-        // Debug counts with explicit type checking
-        const activeCount = processedData.filter(org => org.is_active === 1 || org.is_active === true).length;
-        const inactiveCount = processedData.filter(org => 
-          org.is_active === 0 || 
-          org.is_active === false || 
-          org.is_active === null || 
-          org.is_active === undefined
-        ).length;
-        
-        console.log(`ORGANIZATION STATUS CHECK - Active: ${activeCount}, Inactive: ${inactiveCount}, Total: ${processedData.length}`);
-        console.log('INACTIVE ORGS:', processedData.filter(org => 
-          org.is_active === 0 || 
-          org.is_active === false || 
-          org.is_active === null || 
-          org.is_active === undefined
-        ));
-      } else {
-        console.error('API returned non-array data for organizations:', data);
-        setOrganizations([]);
-      }
+      // Update statistics
+      const activeOrgs = data.filter(org => org.is_active === 1).length;
+      const inactiveOrgs = data.filter(org => org.is_active === 0).length;
+      setStats(prevStats => ({
+        ...prevStats,
+        totalOrganizations: data.length,
+        activeOrganizations: activeOrgs,
+        inactiveOrganizations: inactiveOrgs
+      }));
     } catch (error) {
       console.error('Error fetching organizations:', error);
-      setOrganizations([]);
+      setError('Failed to fetch organizations');
+      setTimeout(() => setError(''), 5000);
     }
   };
 
@@ -456,6 +424,7 @@ const AdminDashboard = () => {
         const phoneValid = orgData.phone_number ? validateInput('phone', orgData.phone_number) : true;
         
         if (!nameValid || !emailValid || !phoneValid) {
+          setError('Please fix validation errors before updating');
           return;
         }
       }
@@ -463,7 +432,7 @@ const AdminDashboard = () => {
       let method = 'PUT';
       if (action === 'delete') method = 'DELETE';
 
-      const response = await fetch(`http://localhost:3000/api/organizations/${orgId}`, {
+      const response = await fetch(`http://localhost:3000/api/organizations/profile/${orgId}`, {
         method,
         headers: {
           'Content-Type': 'application/json',
@@ -472,13 +441,64 @@ const AdminDashboard = () => {
         body: orgData ? JSON.stringify(orgData) : null
       });
 
-      if (response.ok) {
-        fetchOrganizations();
-        setEditingOrg(null);
-        setShowDeleteConfirm({ show: false, type: '', id: null });
+      if (response.status === 403) {
+        setError('Access denied. Admin privileges required.');
+        handleLogout();
+        navigate('/login');
+        return;
       }
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.message || `Failed to ${action} organization`);
+      }
+
+      fetchOrganizations();
+      setEditingOrg(null);
+      setShowDeleteConfirm({ show: false, type: '', id: null });
+      setError(`Organization ${action === 'delete' ? 'deleted' : 'updated'} successfully`);
+      setTimeout(() => setError(''), 3000);
     } catch (error) {
-      console.error('Error updating organization:', error);
+      console.error(`Error ${action}ing organization:`, error);
+      setError(`Failed to ${action} organization: ${error.message}`);
+      setTimeout(() => setError(''), 5000);
+    }
+  };
+
+  const handleOrgPasswordChange = async (orgId) => {
+    try {
+      if (!handlePasswordChange()) {
+        return;
+      }
+
+      const response = await fetch(`http://localhost:3000/api/organizations/${orgId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ password: passwordData.password })
+      });
+
+      if (response.status === 403) {
+        setError('Access denied. Admin privileges required.');
+        handleLogout();
+        navigate('/login');
+        return;
+      }
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.message || 'Failed to update password');
+      }
+
+      setPasswordData({ password: '', confirmPassword: '' });
+      setShowPasswordModal(false);
+      setError('Password updated successfully');
+      setTimeout(() => setError(''), 3000);
+    } catch (error) {
+      console.error('Error updating password:', error);
+      setPasswordError(`Failed to update password: ${error.message}`);
     }
   };
 
@@ -506,7 +526,19 @@ const AdminDashboard = () => {
   const handleCreateOrg = async (e) => {
     e.preventDefault();
     try {
-      const response = await fetch('http://localhost:3000/api/organizations/register', {
+      // Validate required fields
+      const nameValid = validateInput('name', newOrg.name);
+      const emailValid = validateInput('email', newOrg.email);
+      const phoneValid = validateInput('phone', newOrg.phone_number);
+      const passwordValid = newOrg.password.length >= 6;
+      const workingHoursValid = newOrg.working_hours.trim() !== '';
+      
+      if (!nameValid || !emailValid || !phoneValid || !passwordValid || !workingHoursValid) {
+        setError('Please fill in all required fields correctly');
+        return;
+      }
+
+      const response = await fetch('http://localhost:3000/api/organizations', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -515,19 +547,33 @@ const AdminDashboard = () => {
         body: JSON.stringify(newOrg)
       });
 
-      if (response.ok) {
-        setNewOrg({ 
-          name: '', 
-          email: '', 
-          password: '', 
-          phone_number: '', 
-          location: '', 
-          working_hours: '' 
-        });
-        fetchOrganizations();
+      if (response.status === 403) {
+        setError('Access denied. Admin privileges required.');
+        handleLogout();
+        navigate('/login');
+        return;
       }
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.message || 'Failed to create organization');
+      }
+
+      setNewOrg({ 
+        name: '', 
+        email: '', 
+        password: '', 
+        phone_number: '', 
+        location: '', 
+        working_hours: '' 
+      });
+      fetchOrganizations();
+      setError('Organization created successfully');
+      setTimeout(() => setError(''), 3000);
     } catch (error) {
       console.error('Error creating organization:', error);
+      setError(`Failed to create organization: ${error.message}`);
+      setTimeout(() => setError(''), 5000);
     }
   };
 
