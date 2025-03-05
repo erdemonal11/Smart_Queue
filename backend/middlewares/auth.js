@@ -55,10 +55,32 @@ const isOwnOrganization = (req, res, next) => {
   }
 };
 
+/**
+ * Middleware to authorize users based on their role
+ * @param {Array} allowedRoles - Array of roles that are allowed to access the route
+ * @returns {Function} - Express middleware function
+ */
+const authorizeRole = (allowedRoles) => {
+  return (req, res, next) => {
+    if (!req.user || !req.user.role) {
+      return res.status(403).json({ error: 'Access denied. Role information missing.' });
+    }
+
+    if (allowedRoles.includes(req.user.role)) {
+      next();
+    } else {
+      return res.status(403).json({ 
+        error: 'Access denied. You do not have permission to perform this action.' 
+      });
+    }
+  };
+};
+
 module.exports = {
   authenticateToken,
   isAdmin,
   isOrganization,
   isOwnProfile,
-  isOwnOrganization
+  isOwnOrganization,
+  authorizeRole
 }; 

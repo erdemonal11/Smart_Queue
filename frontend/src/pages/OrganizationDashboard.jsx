@@ -1,7 +1,12 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
-import { FaSignOutAlt, FaBuilding, FaEdit, FaCheck, FaTimes, FaEye, FaEyeSlash, FaTrash } from 'react-icons/fa';
+import { FaSignOutAlt, FaBuilding, FaEdit, FaCheck, FaTimes, FaEye, FaEyeSlash, FaTrash, FaClock, FaSpinner, FaCalendar } from 'react-icons/fa';
+import { format } from 'date-fns';
+import DatePicker from 'react-datepicker';
+import "react-datepicker/dist/react-datepicker.css";
+import bookingService from '../services/bookingService';
+import organizationService from '../services/organizationService';
 
 // Function to decode JWT token
 const parseJwt = (token) => {
@@ -46,6 +51,20 @@ const OrganizationDashboard = () => {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [nameError, setNameError] = useState('');
   const [phoneError, setPhoneError] = useState('');
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [queueData, setQueueData] = useState([]);
+  const [queueError, setQueueError] = useState('');
+  const [queueLoading, setQueueLoading] = useState(false);
+  const [timeSlots, setTimeSlots] = useState([]);
+  const [newTimeSlot, setNewTimeSlot] = useState({
+    start_time: '',
+    end_time: '',
+    capacity: '6'
+  });
+  const [timeSlotError, setTimeSlotError] = useState('');
+  const [isCreatingTimeSlot, setIsCreatingTimeSlot] = useState(false);
+  const [selectedTimeSlot, setSelectedTimeSlot] = useState(null);
+  const [refreshQueue, setRefreshQueue] = useState(0);
 
   // Extract user ID from token if not available in user object
   useEffect(() => {
@@ -101,6 +120,13 @@ const OrganizationDashboard = () => {
     }
   }, [user, navigate, userId]);
 
+  useEffect(() => {
+    if (selectedDate && userId && profile) {
+      fetchQueueData();
+      fetchOrgTimeSlots();
+    }
+  }, [selectedDate, userId, profile, refreshQueue]);
+
   const fetchOrgProfile = async () => {
     if (!userId) {
       console.log('Cannot fetch profile: User ID is missing');
@@ -111,27 +137,7 @@ const OrganizationDashboard = () => {
     setLoading(true);
     try {
       console.log('Fetching organization profile for ID:', userId);
-      const response = await fetch(`http://localhost:3000/api/organizations/profile/${userId}`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-
-      console.log('Profile response status:', response.status);
-      if (response.status === 403) {
-        setError('Access denied. You do not have permission to view this profile.');
-        setTimeout(() => {
-          handleLogout();
-          navigate('/login');
-        }, 2000);
-        return;
-      }
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch profile: ${response.status}`);
-      }
-
-      const data = await response.json();
+      const data = await organizationService.getOrganizationProfile(userId);
       console.log('Profile data received:', data);
       setProfile(data);
       setEditForm({
@@ -144,9 +150,61 @@ const OrganizationDashboard = () => {
       });
     } catch (error) {
       console.error('Error fetching profile:', error);
-      setError(`Error fetching profile: ${error.message}`);
+      setError(error.message || 'Error fetching profile');
+      if (error.response?.status === 403) {
+        setTimeout(() => {
+          handleLogout();
+          navigate('/login');
+        }, 2000);
+      }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchOrgTimeSlots = async () => {
+    try {
+      // First get all time slots for the organization
+      const allSlots = await organizationService.getOrganizationTimeSlots(profile.id);
+      
+      // Then get available slots for the selected date
+      const formattedDate = format(selectedDate, 'yyyy-MM-dd');
+      const availableSlots = await organizationService.getTimeslots(userId, formattedDate);
+      
+      // Merge the data to include both availability and active status
+      const mergedSlots = allSlots.map(slot => {
+        const availableSlot = availableSlots.find(
+          available => available.start_time === slot.start_time && available.end_time === slot.end_time
+        );
+        
+        return {
+          ...slot,
+          available_spots: availableSlot ? availableSlot.available_spots : 0,
+          is_full: availableSlot ? availableSlot.is_full : true
+        };
+      });
+      
+      setTimeSlots(mergedSlots);
+    } catch (error) {
+      console.error('Error fetching time slots:', error);
+      setTimeSlotError('Failed to fetch time slots');
+    }
+  };
+
+  const fetchQueueData = async () => {
+    if (!userId) return;
+
+    setQueueLoading(true);
+    try {
+      const formattedDate = format(selectedDate, 'yyyy-MM-dd');
+      const data = await bookingService.getOrganizationQueue(userId, formattedDate);
+      setQueueData(data); // Data is already grouped by time slot from the backend
+      setQueueError('');
+    } catch (error) {
+      console.error('Error fetching queue data:', error);
+      setQueueError(error.message || 'Failed to fetch queue data');
+    } finally {
+      setQueueLoading(false);
     }
   };
 
@@ -193,25 +251,7 @@ const OrganizationDashboard = () => {
         delete updateData.password;
       }
 
-      const response = await fetch(`http://localhost:3000/api/organizations/profile/${userId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify(updateData)
-      });
-
-      if (response.status === 403) {
-        setError('Access denied. You do not have permission to update this profile.');
-        return;
-      }
-
-      if (!response.ok) {
-        throw new Error(`Failed to update profile: ${response.status}`);
-      }
-
-      const updatedProfile = await response.json();
+      const updatedProfile = await organizationService.updateOrganizationProfile(userId, updateData);
       setProfile(updatedProfile);
       setIsEditing(false);
       setPasswordConfirm('');
@@ -220,7 +260,10 @@ const OrganizationDashboard = () => {
       setError('');
     } catch (error) {
       console.error('Error updating profile:', error);
-      setError(`Error updating profile: ${error.message}`);
+      setError(error.message || 'Error updating profile');
+      if (error.response?.status === 403) {
+        setError('Access denied. You do not have permission to update this profile.');
+      }
     }
   };
 
@@ -231,27 +274,15 @@ const OrganizationDashboard = () => {
     }
 
     try {
-      const response = await fetch(`http://localhost:3000/api/organizations/profile/${userId}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-
-      if (response.status === 403) {
-        setError('Access denied. You do not have permission to delete this account.');
-        return;
-      }
-
-      if (!response.ok) {
-        throw new Error(`Failed to delete account: ${response.status}`);
-      }
-
+      await organizationService.deleteOrganization(userId);
       handleLogout();
       navigate('/');
     } catch (error) {
       console.error('Error deleting account:', error);
-      setError(`Error deleting account: ${error.message}`);
+      setError(error.message || 'Error deleting account');
+      if (error.response?.status === 403) {
+        setError('Access denied. You do not have permission to delete this account.');
+      }
     }
   };
 
@@ -329,6 +360,126 @@ const OrganizationDashboard = () => {
     
     return digits;
   };
+
+  const handleDateChange = (date) => {
+    setSelectedDate(date);
+  };
+
+  const handleCancelBooking = async (bookingId) => {
+    if (!window.confirm('Are you sure you want to cancel this booking?')) {
+      return;
+    }
+
+    try {
+      setQueueLoading(true);
+      await bookingService.cancelBooking(bookingId);
+      setRefreshQueue(prev => prev + 1); // Trigger refresh
+      alert('Booking cancelled successfully');
+    } catch (err) {
+      setError('Failed to cancel booking');
+    } finally {
+      setQueueLoading(false);
+    }
+  };
+
+  // Add this function to create a new time slot
+  const handleCreateTimeSlot = async (e) => {
+    e.preventDefault();
+    setTimeSlotError('');
+    setIsCreatingTimeSlot(true);
+
+    try {
+      // Validate inputs
+      const capacity = parseInt(newTimeSlot.capacity);
+      if (isNaN(capacity) || capacity < 1 || capacity > 50) {
+        throw new Error('Capacity must be a number between 1 and 50');
+      }
+
+      if (!newTimeSlot.start_time || !newTimeSlot.end_time) {
+        throw new Error('Please select both start and end times');
+      }
+
+      // Convert times to Date objects for comparison
+      const [startHours, startMinutes] = newTimeSlot.start_time.split(':');
+      const [endHours, endMinutes] = newTimeSlot.end_time.split(':');
+      const startTime = new Date(2000, 0, 1, parseInt(startHours), parseInt(startMinutes));
+      const endTime = new Date(2000, 0, 1, parseInt(endHours), parseInt(endMinutes));
+
+      // Check if end time is after start time
+      if (endTime <= startTime) {
+        throw new Error('End time must be after start time');
+      }
+
+      // Validate against organization's working hours
+      if (profile.working_hours) {
+        const [workStart, workEnd] = profile.working_hours.split('-');
+        const [workStartHours, workStartMinutes] = workStart.split(':');
+        const [workEndHours, workEndMinutes] = workEnd.split(':');
+        
+        const workingStartTime = new Date(2000, 0, 1, parseInt(workStartHours), parseInt(workStartMinutes));
+        const workingEndTime = new Date(2000, 0, 1, parseInt(workEndHours), parseInt(workEndMinutes));
+
+        if (startTime < workingStartTime || endTime > workingEndTime) {
+          throw new Error(`Time slot must be within working hours (${workStart} - ${workEnd})`);
+        }
+      } else {
+        throw new Error('Please set your organization working hours first');
+      }
+
+      // Create time slot with validated data
+      await organizationService.createTimeSlot(profile.id, {
+        ...newTimeSlot,
+        capacity: capacity
+      });
+
+      // Reset form
+      setNewTimeSlot({
+        start_time: '',
+        end_time: '',
+        capacity: '6'
+      });
+      
+      // Refresh time slots
+      await fetchOrgTimeSlots();
+      alert('Time slot created successfully!');
+    } catch (error) {
+      setTimeSlotError(error.message || 'Failed to create time slot');
+    } finally {
+      setIsCreatingTimeSlot(false);
+    }
+  };
+
+  // Add this function to delete a time slot
+  const handleDeleteTimeSlot = async (slotId) => {
+    if (!window.confirm('Are you sure you want to delete this time slot?')) {
+      return;
+    }
+
+    try {
+      setTimeSlotError('');
+      const response = await organizationService.deleteTimeSlot(profile.id, slotId);
+      
+      if (response.message) {
+        alert(response.message);
+      }
+      
+      await fetchOrgTimeSlots(); // Refresh the list
+    } catch (error) {
+      console.error('Error deleting time slot:', error);
+      setTimeSlotError(
+        error.response?.data?.error || 
+        error.message || 
+        'Failed to delete time slot. Make sure there are no active bookings for this slot.'
+      );
+    }
+  };
+
+  // Add this useEffect to fetch time slots when component mounts
+  useEffect(() => {
+    if (profile?.id) {
+      fetchOrgTimeSlots();
+    }
+  }, [profile]);
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -599,10 +750,246 @@ const OrganizationDashboard = () => {
             </div>
             
             <div className="mt-8 bg-white rounded-lg shadow-md p-4 sm:p-6">
-              <div className="text-center py-8">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
                 <h2 className="text-xl font-bold text-gray-800 mb-4">Queue Management</h2>
-                <p className="text-gray-600">Queue functionality will be implemented in a future update.</p>
-                <p className="text-gray-500 mt-2">Stay tuned for new features!</p>
+                <div className="flex items-center space-x-4">
+                  <DatePicker
+                    selected={selectedDate}
+                    onChange={handleDateChange}
+                    dateFormat="MMMM d, yyyy"
+                    minDate={new Date()}
+                    className="form-input rounded-md shadow-sm"
+                  />
+                </div>
+              </div>
+
+              {queueError && (
+                <div className="mb-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative">
+                  <strong className="font-bold">Error: </strong>
+                  <span className="block sm:inline">{queueError}</span>
+                  <button
+                    className="absolute top-0 bottom-0 right-0 px-4 py-3"
+                    onClick={() => setQueueError('')}
+                  >
+                    <FaTimes />
+                  </button>
+                </div>
+              )}
+
+              {queueLoading ? (
+                <div className="flex justify-center items-center py-8">
+                  <FaSpinner className="animate-spin text-4xl text-blue-500" />
+                </div>
+              ) : queueError ? (
+                <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4">
+                  <strong className="font-bold">Error: </strong>
+                  <span className="block sm:inline">{queueError}</span>
+                </div>
+              ) : Object.entries(queueData).map(([timeSlotKey, bookings]) => {
+                const [startTime, endTime] = timeSlotKey.split('-');
+                return (
+                  <div key={timeSlotKey} className="bg-gray-50 rounded-lg p-4">
+                    <h3 className="text-lg font-semibold text-gray-800 mb-3">
+                      <FaClock className="inline mr-2" />
+                      {`${startTime.slice(0, 5)} - ${endTime.slice(0, 5)}`}
+                    </h3>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Queue #
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Customer Name
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Status
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Actions
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {bookings.map((booking) => (
+                            <tr key={booking.booking_id}>
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                <div className="text-sm text-gray-900">#{booking.queue_position}</div>
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                <div className="text-sm text-gray-900">{booking.user_name}</div>
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full
+                                  ${booking.status === 'Confirmed' ? 'bg-green-100 text-green-800' : 
+                                    booking.status === 'Cancelled' ? 'bg-red-100 text-red-800' : 
+                                    'bg-yellow-100 text-yellow-800'}`}>
+                                  {booking.status}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                {booking.status === 'Confirmed' && (
+                                  <button
+                                    onClick={() => handleCancelBooking(booking.booking_id)}
+                                    className="text-red-600 hover:text-red-900"
+                                  >
+                                    Cancel
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Add this new section for Time Slot Management */}
+            <div className="max-w-7xl mx-auto px-4 py-8">
+              <div className="bg-white rounded-lg shadow-md p-6">
+                <h2 className="text-xl font-bold text-gray-800 mb-4">Time Slot Management</h2>
+                
+                {timeSlotError && (
+                  <div className="mb-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative">
+                    <strong className="font-bold">Error: </strong>
+                    <span className="block sm:inline">{timeSlotError}</span>
+                    <button
+                      className="absolute top-0 bottom-0 right-0 px-4 py-3"
+                      onClick={() => setTimeSlotError('')}
+                    >
+                      <FaTimes />
+                    </button>
+                  </div>
+                )}
+
+                <form onSubmit={handleCreateTimeSlot} className="mb-6">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Start Time
+                      </label>
+                      <input
+                        type="time"
+                        value={newTimeSlot.start_time}
+                        onChange={(e) => setNewTimeSlot({ ...newTimeSlot, start_time: e.target.value })}
+                        required
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        End Time
+                      </label>
+                      <input
+                        type="time"
+                        value={newTimeSlot.end_time}
+                        onChange={(e) => setNewTimeSlot({ ...newTimeSlot, end_time: e.target.value })}
+                        required
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Capacity
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="50"
+                        value={newTimeSlot.capacity}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          if (value === '' || (parseInt(value) >= 1 && parseInt(value) <= 50)) {
+                            setNewTimeSlot({ ...newTimeSlot, capacity: value });
+                          }
+                        }}
+                        required
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+                  <div className="mt-4">
+                    <button
+                      type="submit"
+                      disabled={isCreatingTimeSlot}
+                      className={`flex items-center justify-center w-full md:w-auto px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 ${
+                        isCreatingTimeSlot ? 'opacity-50 cursor-not-allowed' : ''
+                      }`}
+                    >
+                      {isCreatingTimeSlot ? (
+                        <>
+                          <FaSpinner className="animate-spin mr-2" />
+                          Creating...
+                        </>
+                      ) : (
+                        'Create Time Slot'
+                      )}
+                    </button>
+                  </div>
+                </form>
+
+                <div className="mt-6">
+                  <h3 className="text-lg font-medium text-gray-900 mb-4">Existing Time Slots</h3>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Start Time
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            End Time
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Capacity
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Status
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Actions
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {timeSlots.map((slot) => (
+                          <tr key={slot.id}>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                              {format(new Date(`2000-01-01T${slot.start_time}`), 'hh:mm a')}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                              {format(new Date(`2000-01-01T${slot.end_time}`), 'hh:mm a')}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                              {slot.capacity}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                                slot.is_active
+                                  ? 'bg-green-100 text-green-800'
+                                  : 'bg-red-100 text-red-800'
+                              }`}>
+                                {slot.is_active ? 'Active' : 'Inactive'}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                              <button
+                                onClick={() => handleDeleteTimeSlot(slot.id)}
+                                className="text-red-600 hover:text-red-900"
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

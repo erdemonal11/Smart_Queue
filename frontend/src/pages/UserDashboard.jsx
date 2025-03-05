@@ -1,7 +1,13 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
-import { FaSignOutAlt, FaUser, FaEdit, FaCheck, FaTimes, FaEye, FaEyeSlash, FaTrash } from 'react-icons/fa';
+import { FaSignOutAlt, FaUser, FaEdit, FaCheck, FaTimes, FaEye, FaEyeSlash, FaTrash, FaClock, FaCalendar, FaSpinner } from 'react-icons/fa';
+import { format } from 'date-fns';
+import bookingService from '../services/bookingService';
+import userService from '../services/userService';
+import organizationService from '../services/organizationService';
+import DatePicker from 'react-datepicker';
+import "react-datepicker/dist/react-datepicker.css";
 
 const UserDashboard = () => {
   const { user, handleLogout } = useContext(AuthContext);
@@ -20,19 +26,52 @@ const UserDashboard = () => {
   const [error, setError] = useState('');
   const [nameError, setNameError] = useState('');
   const [phoneError, setPhoneError] = useState('');
+  const [bookings, setBookings] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [organizations, setOrganizations] = useState([]);
+  const [selectedOrg, setSelectedOrg] = useState(null);
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [availableTimeSlots, setAvailableTimeSlots] = useState([]);
+  const [selectedTimeSlot, setSelectedTimeSlot] = useState(null);
+  const [bookingError, setBookingError] = useState('');
+  const [isBooking, setIsBooking] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filteredOrgs, setFilteredOrgs] = useState([]);
+  const [showOrgResults, setShowOrgResults] = useState(false);
 
   useEffect(() => {
     fetchUserProfile();
+    fetchUserBookings();
+    fetchOrganizations();
   }, []);
+
+  useEffect(() => {
+    if (selectedOrg && selectedDate) {
+      fetchTimeSlots();
+    }
+  }, [selectedOrg, selectedDate]);
+
+  useEffect(() => {
+    const filterOrganizations = () => {
+      if (!searchTerm.trim()) {
+        setFilteredOrgs([]);
+        return;
+      }
+      
+      const searchTermLower = searchTerm.toLowerCase();
+      const filtered = organizations.filter(org => 
+        org.name.toLowerCase().includes(searchTermLower) ||
+        (org.location && org.location.toLowerCase().includes(searchTermLower))
+      );
+      setFilteredOrgs(filtered);
+    };
+
+    filterOrganizations();
+  }, [searchTerm, organizations]);
 
   const fetchUserProfile = async () => {
     try {
-      const response = await fetch(`http://localhost:3000/api/users/profile/${user.id}`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-      const data = await response.json();
+      const data = await userService.getUserProfile(user.id);
       setProfile(data);
       setEditForm({
         name: data.name,
@@ -42,6 +81,44 @@ const UserDashboard = () => {
       });
     } catch (error) {
       console.error('Error fetching profile:', error);
+      setError(error.message || 'Error fetching profile');
+      if (error.response?.status === 403) {
+        setTimeout(() => {
+          handleLogout();
+          navigate('/login');
+        }, 2000);
+      }
+    }
+  };
+
+  const fetchUserBookings = async () => {
+    try {
+      setLoading(true);
+      const data = await bookingService.getUserBookings();
+      setBookings(data);
+    } catch (err) {
+      setError('Failed to fetch your bookings');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchOrganizations = async () => {
+    try {
+      const data = await organizationService.getActiveOrganizations();
+      setOrganizations(data);
+    } catch (error) {
+      setError('Failed to fetch organizations');
+    }
+  };
+
+  const fetchTimeSlots = async () => {
+    try {
+      const formattedDate = format(selectedDate, 'yyyy-MM-dd');
+      const slots = await organizationService.getTimeslots(selectedOrg.id, formattedDate);
+      setAvailableTimeSlots(slots);
+    } catch (error) {
+      setError('Failed to fetch time slots');
     }
   };
 
@@ -58,57 +135,30 @@ const UserDashboard = () => {
         delete updateData.password;
       }
 
-      const response = await fetch(`http://localhost:3000/api/users/profile/${user.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify(updateData)
-      });
-
-      if (response.status === 403) {
-        setError('Access denied. You do not have permission to update this profile.');
-        return;
-      }
-
-      if (!response.ok) {
-        throw new Error(`Failed to update profile: ${response.status}`);
-      }
-
-      const updatedProfile = await response.json();
+      const updatedProfile = await userService.updateUserProfile(user.id, updateData);
       setProfile(updatedProfile);
       setIsEditing(false);
       setError('');
     } catch (error) {
       console.error('Error updating profile:', error);
-      setError(`Error updating profile: ${error.message}`);
+      setError(error.message || 'Error updating profile');
+      if (error.response?.status === 403) {
+        setError('Access denied. You do not have permission to update this profile.');
+      }
     }
   };
 
   const handleDeleteAccount = async () => {
     try {
-      const response = await fetch(`http://localhost:3000/api/users/profile/${user.id}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-
-      if (response.status === 403) {
-        setError('Access denied. You do not have permission to delete this account.');
-        return;
-      }
-
-      if (!response.ok) {
-        throw new Error(`Failed to delete account: ${response.status}`);
-      }
-
+      await userService.deleteUser(user.id);
       handleLogout();
       navigate('/');
     } catch (error) {
       console.error('Error deleting account:', error);
-      setError(`Error deleting account: ${error.message}`);
+      setError(error.message || 'Error deleting account');
+      if (error.response?.status === 403) {
+        setError('Access denied. You do not have permission to delete this account.');
+      }
     }
   };
 
@@ -124,6 +174,64 @@ const UserDashboard = () => {
   const togglePasswordVisibility = () => {
     setShowPassword(!showPassword);
   };
+
+  const handleCancelBooking = async (bookingId) => {
+    if (!window.confirm('Are you sure you want to cancel this booking?')) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await bookingService.cancelBooking(bookingId);
+      await fetchUserBookings(); // Refresh the list
+      alert('Booking cancelled successfully');
+    } catch (err) {
+      setError('Failed to cancel booking');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCreateBooking = async () => {
+    if (!selectedOrg || !selectedDate || !selectedTimeSlot) {
+      setBookingError('Please select all required fields');
+      return;
+    }
+
+    try {
+      setIsBooking(true);
+      const formattedDate = format(selectedDate, 'yyyy-MM-dd');
+      const bookingData = {
+        organizationId: selectedOrg.id,
+        date: formattedDate,
+        timeslotId: selectedTimeSlot
+      };
+      
+      await bookingService.createBooking(bookingData);
+      
+      // Reset form and refresh bookings
+      setSelectedOrg(null);
+      setSelectedTimeSlot(null);
+      setBookingError('');
+      await fetchUserBookings();
+      alert('Booking created successfully!');
+    } catch (error) {
+      console.error('Booking error:', error);
+      // Get the error message from the error object
+      const errorMessage = error.error || error.message || 'Failed to create booking';
+      setBookingError(errorMessage);
+    } finally {
+      setIsBooking(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center h-64">
+        <FaSpinner className="animate-spin text-4xl text-blue-500" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -309,6 +417,227 @@ const UserDashboard = () => {
             <div className="text-center py-4">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500 mx-auto"></div>
               <p className="mt-2 text-gray-600">Loading profile...</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Create New Booking Section */}
+      <div className="max-w-7xl mx-auto px-4 py-8">
+        <div className="bg-white rounded-lg shadow-md p-4 sm:p-6">
+          <h2 className="text-xl font-bold text-gray-800 mb-4">Create New Booking</h2>
+          
+          {bookingError && (
+            <div className="mb-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative">
+              <strong className="font-bold">Error: </strong>
+              <span className="block sm:inline">{bookingError}</span>
+              <button
+                className="absolute top-0 bottom-0 right-0 px-4 py-3"
+                onClick={() => setBookingError('')}
+              >
+                <FaTimes />
+              </button>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="relative">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Search Organization
+              </label>
+              <input
+                type="text"
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                placeholder="Search by name or location..."
+                value={searchTerm}
+                onChange={(e) => {
+                  setSearchTerm(e.target.value);
+                  setShowOrgResults(true);
+                }}
+                onFocus={() => setShowOrgResults(true)}
+              />
+              {showOrgResults && filteredOrgs.length > 0 && (
+                <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-auto">
+                  {filteredOrgs.map(org => (
+                    <div
+                      key={org.id}
+                      className="px-4 py-2 hover:bg-gray-100 cursor-pointer"
+                      onClick={() => {
+                        setSelectedOrg(org);
+                        setSearchTerm(`${org.name} - ${org.location}`);
+                        setShowOrgResults(false);
+                        setSelectedTimeSlot(null);
+                      }}
+                    >
+                      <div className="font-medium">{org.name}</div>
+                      <div className="text-sm text-gray-600">{org.location}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Select Date
+              </label>
+              <DatePicker
+                selected={selectedDate}
+                onChange={date => {
+                  setSelectedDate(date);
+                  setSelectedTimeSlot(null);
+                }}
+                minDate={new Date()}
+                dateFormat="MMMM d, yyyy"
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+              />
+            </div>
+
+            {selectedOrg && selectedDate && (
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Select Time Slot
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                  {availableTimeSlots.map(slot => (
+                    <button
+                      key={slot.id}
+                      onClick={() => setSelectedTimeSlot(slot.id)}
+                      className={`p-2 text-sm rounded-md ${
+                        selectedTimeSlot === slot.id
+                          ? 'bg-indigo-600 text-white'
+                          : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
+                      }`}
+                    >
+                      {format(new Date(`2000-01-01T${slot.start_time}`), 'hh:mm a')} - {format(new Date(`2000-01-01T${slot.end_time}`), 'hh:mm a')}
+                      {slot.available_spots > 0 && ` (${slot.available_spots} spots)`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="mt-6 flex justify-end">
+            <button
+              onClick={handleCreateBooking}
+              disabled={!selectedOrg || !selectedDate || !selectedTimeSlot || isBooking}
+              className={`flex items-center space-x-2 px-4 py-2 rounded-md ${
+                !selectedOrg || !selectedDate || !selectedTimeSlot || isBooking
+                  ? 'bg-gray-300 cursor-not-allowed'
+                  : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+              }`}
+            >
+              {isBooking ? (
+                <>
+                  <FaSpinner className="animate-spin" />
+                  <span>Creating Booking...</span>
+                </>
+              ) : (
+                <>
+                  <FaCalendar />
+                  <span>Create Booking</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Bookings Section */}
+      <div className="max-w-7xl mx-auto px-4 py-8">
+        <div className="bg-white rounded-lg shadow-md p-4 sm:p-6">
+          <h2 className="text-xl font-bold text-gray-800 mb-4">My Bookings</h2>
+          
+          {error && (
+            <div className="mb-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative">
+              <strong className="font-bold">Error: </strong>
+              <span className="block sm:inline">{error}</span>
+              <button
+                className="absolute top-0 bottom-0 right-0 px-4 py-3"
+                onClick={() => setError('')}
+              >
+                <FaTimes />
+              </button>
+            </div>
+          )}
+
+          {bookings.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Organization
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Date
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Time
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Queue Position
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Status
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {bookings.map((booking) => (
+                    <tr key={booking.id}>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm font-medium text-gray-900">
+                          {booking.organization_name}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm text-gray-900">
+                          <FaCalendar className="inline mr-2" />
+                          {format(new Date(booking.date), 'MMM dd, yyyy')}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm text-gray-900">
+                          <FaClock className="inline mr-2" />
+                          {booking.time_slot || 'N/A'}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm bg-blue-100 text-blue-800 inline-flex items-center px-2.5 py-0.5 rounded-full">
+                          #{booking.queue_position}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full
+                          ${booking.status === 'Confirmed' ? 'bg-green-100 text-green-800' : 
+                            booking.status === 'Cancelled' ? 'bg-red-100 text-red-800' : 
+                            'bg-yellow-100 text-yellow-800'}`}>
+                          {booking.status}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                        {booking.status === 'Confirmed' && (
+                          <button
+                            onClick={() => handleCancelBooking(booking.id)}
+                            className="text-red-600 hover:text-red-900"
+                          >
+                            Cancel
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="text-center py-4">
+              <p className="text-gray-500">You don't have any bookings yet.</p>
             </div>
           )}
         </div>

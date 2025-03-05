@@ -14,7 +14,8 @@ router.delete('/profile/:id', authenticateToken, isOwnOrganization, organization
 
 // Admin routes for organization management
 router.get('/admin', authenticateToken, isAdmin, organizationController.getAllOrganizationsAdmin);
-router.get('/', authenticateToken, isAdmin, organizationController.getAllOrganizations);
+// Allow any authenticated user to get all organizations
+router.get('/', authenticateToken, organizationController.getAllOrganizations);
 router.get('/:id', authenticateToken, isAdmin, organizationController.getOrganizationById);
 router.put('/:id', authenticateToken, isAdmin, organizationController.updateOrganization);
 router.delete('/:id', authenticateToken, isAdmin, organizationController.deleteOrganization);

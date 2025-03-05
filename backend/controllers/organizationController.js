@@ -296,6 +296,241 @@ const deleteQueue = async (req, res) => {
   }
 };
 
+// Get organization's time slots for a specific date
+const getTimeslots = async (req, res) => {
+  const { organizationId, date } = req.params;
+
+  try {
+    // Get organization's working hours
+    const orgResult = await db.query(
+      'SELECT working_hours FROM organizations WHERE id = $1',
+      [organizationId]
+    );
+
+    if (orgResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Organization not found' });
+    }
+
+    const workingHours = orgResult.rows[0].working_hours;
+    const [start, end] = workingHours.split('-');
+    
+    // Generate time slots every 30 minutes within working hours
+    const slots = [];
+    let currentTime = new Date(`2000-01-01T${start}`);
+    const endTime = new Date(`2000-01-01T${end}`);
+
+    while (currentTime < endTime) {
+      slots.push({
+        id: currentTime.toTimeString().slice(0, 8), // HH:MM:SS format
+        time: currentTime.toTimeString().slice(0, 8)
+      });
+      currentTime.setMinutes(currentTime.getMinutes() + 30);
+    }
+
+    // Get booked slots
+    const bookedResult = await db.query(
+      `SELECT time_slot, COUNT(*) as count
+       FROM bookings 
+       WHERE organization_id = $1 
+       AND date = $2 
+       AND status = 'Confirmed'
+       GROUP BY time_slot`,
+      [organizationId, date]
+    );
+
+    // Filter out fully booked slots (6 or more bookings)
+    const availableSlots = slots.filter(slot => {
+      const bookedSlot = bookedResult.rows.find(
+        row => row.time_slot === slot.time
+      );
+      return !bookedSlot || parseInt(bookedSlot.count) < 6;
+    });
+
+    res.json(availableSlots);
+  } catch (error) {
+    console.error('Error getting time slots:', error);
+    res.status(500).json({ error: 'Failed to get time slots' });
+  }
+};
+
+// Time slot management functions
+const createTimeSlot = async (req, res) => {
+  const { id } = req.params; // organization id
+  const { start_time, end_time, capacity } = req.body;
+
+  try {
+    // Validate input
+    if (!start_time || !end_time) {
+      return res.status(400).json({ error: 'Start time and end time are required' });
+    }
+
+    // Validate capacity
+    const slot_capacity = capacity || 6; // Default to 6 if not specified
+    if (slot_capacity < 1) {
+      return res.status(400).json({ error: 'Capacity must be at least 1' });
+    }
+
+    // Check if time slot already exists
+    const existingSlot = await db.query(
+      'SELECT * FROM time_slots WHERE organization_id = $1 AND start_time = $2 AND end_time = $3',
+      [id, start_time, end_time]
+    );
+
+    if (existingSlot.rows.length > 0) {
+      return res.status(409).json({ error: 'Time slot already exists' });
+    }
+
+    // Create new time slot
+    const result = await db.query(
+      `INSERT INTO time_slots (organization_id, start_time, end_time, capacity)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [id, start_time, end_time, slot_capacity]
+    );
+
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Error creating time slot:', error);
+    res.status(500).json({ error: 'Failed to create time slot' });
+  }
+};
+
+const updateTimeSlot = async (req, res) => {
+  const { id, slotId } = req.params;
+  const { start_time, end_time, capacity, is_active } = req.body;
+
+  try {
+    // Check if time slot exists and belongs to organization
+    const slotCheck = await db.query(
+      'SELECT * FROM time_slots WHERE id = $1 AND organization_id = $2',
+      [slotId, id]
+    );
+
+    if (slotCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Time slot not found' });
+    }
+
+    // Prepare update fields
+    const updates = {};
+    if (start_time) updates.start_time = start_time;
+    if (end_time) updates.end_time = end_time;
+    if (capacity) updates.capacity = capacity;
+    if (typeof is_active === 'boolean') updates.is_active = is_active;
+
+    // Construct update query
+    const fields = Object.keys(updates);
+    if (fields.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    const setClause = fields.map((field, i) => `${field} = $${i + 1}`).join(', ');
+    const values = fields.map(field => updates[field]);
+
+    const query = `
+      UPDATE time_slots 
+      SET ${setClause} 
+      WHERE id = $${fields.length + 1} AND organization_id = $${fields.length + 2}
+      RETURNING *
+    `;
+
+    const result = await db.query(query, [...values, slotId, id]);
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating time slot:', error);
+    res.status(500).json({ error: 'Failed to update time slot' });
+  }
+};
+
+const deleteTimeSlot = async (req, res) => {
+  const { id, slotId } = req.params;
+
+  try {
+    // Check if there are any active bookings for this time slot
+    const bookingCheck = await db.query(
+      `SELECT COUNT(*) FROM bookings 
+       WHERE organization_id = $2 AND time_slot_id = $1 AND status = 'Confirmed'`,
+      [slotId, id]
+    );
+
+    if (parseInt(bookingCheck.rows[0].count) > 0) {
+      return res.status(400).json({ 
+        error: 'Cannot delete time slot with active bookings. Please cancel all bookings first.' 
+      });
+    }
+
+    // Delete the time slot
+    const result = await db.query(
+      'DELETE FROM time_slots WHERE id = $1 AND organization_id = $2 RETURNING *',
+      [slotId, id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Time slot not found' });
+    }
+
+    res.json({ message: 'Time slot deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting time slot:', error);
+    res.status(500).json({ error: 'Failed to delete time slot' });
+  }
+};
+
+const getOrganizationTimeSlots = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const result = await db.query(
+      `SELECT * FROM time_slots 
+       WHERE organization_id = $1 
+       ORDER BY start_time`,
+      [id]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching time slots:', error);
+    res.status(500).json({ error: 'Failed to fetch time slots' });
+  }
+};
+
+// Get available time slots for a specific date
+const getAvailableTimeSlots = async (req, res) => {
+  const { organizationId, date } = req.params;
+
+  try {
+    // Get all active time slots for the organization with booking counts
+    const result = await db.query(
+      `SELECT ts.id, ts.start_time, ts.end_time, ts.capacity, ts.is_active,
+              COUNT(b.id) as booking_count
+       FROM time_slots ts
+       LEFT JOIN bookings b ON 
+         b.organization_id = ts.organization_id AND 
+         b.date = $2 AND 
+         b.time_slot_id = ts.id AND
+         b.status = 'Confirmed'
+       WHERE ts.organization_id = $1 
+       AND ts.is_active = true
+       GROUP BY ts.id, ts.start_time, ts.end_time, ts.capacity, ts.is_active
+       ORDER BY ts.start_time`,
+      [organizationId, date]
+    );
+
+    // Format the response
+    const availableSlots = result.rows.map(slot => ({
+      id: slot.id,
+      start_time: slot.start_time,
+      end_time: slot.end_time,
+      capacity: slot.capacity,
+      available_spots: slot.capacity - parseInt(slot.booking_count || 0),
+      is_full: parseInt(slot.booking_count || 0) >= slot.capacity
+    }));
+
+    res.json(availableSlots);
+  } catch (error) {
+    console.error('Error getting available time slots:', error);
+    res.status(500).json({ error: 'Failed to get available time slots' });
+  }
+};
+
 module.exports = {
   getAllOrganizations,
   getOrganizationById,
@@ -307,5 +542,11 @@ module.exports = {
   getOrganizationQueues,
   createQueue,
   updateQueue,
-  deleteQueue
+  deleteQueue,
+  getTimeslots,
+  createTimeSlot,
+  updateTimeSlot,
+  deleteTimeSlot,
+  getOrganizationTimeSlots,
+  getAvailableTimeSlots
 }; 

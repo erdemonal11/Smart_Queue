@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const db = require('./db');
+const bookingRoutes = require('./routes/bookings');
 
 // Load environment variables
 dotenv.config();
@@ -17,12 +18,13 @@ app.use(express.urlencoded({ extended: true }));
 // Import routes
 const userRoutes = require('./routes/userRoutes');
 const adminRoutes = require('./routes/adminRoutes');
-const organizationRoutes = require('./routes/organizationRoutes');
+const organizationRoutes = require('./routes/organizations');
 
 // Route middleware
 app.use('/api/users', userRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/organizations', organizationRoutes);
+app.use('/api/bookings', bookingRoutes);
 
 // Root route
 app.get('/', (req, res) => {
@@ -30,7 +32,7 @@ app.get('/', (req, res) => {
 });
 
 // Initialize database and start server
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 
 const startServer = async () => {
   try {
@@ -47,4 +49,10 @@ const startServer = async () => {
   }
 };
 
-startServer(); 
+startServer();
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ error: 'Something went wrong!' });
+}); 
