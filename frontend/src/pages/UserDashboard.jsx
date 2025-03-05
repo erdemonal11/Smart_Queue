@@ -489,6 +489,10 @@ const UserDashboard = () => {
                 }}
                 minDate={new Date()}
                 dateFormat="MMMM d, yyyy"
+                filterDate={date => {
+                  // Return false for Saturday (6) and Sunday (0)
+                  return date.getDay() !== 6 && date.getDay() !== 0;
+                }}
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
               />
             </div>
