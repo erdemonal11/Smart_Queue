@@ -19,12 +19,14 @@ app.use(express.urlencoded({ extended: true }));
 const userRoutes = require('./routes/userRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const organizationRoutes = require('./routes/organizations');
+const qrRoutes = require('./routes/qrRoutes');
 
 // Route middleware
 app.use('/api/users', userRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/organizations', organizationRoutes);
 app.use('/api/bookings', bookingRoutes);
+app.use('/api/qr', qrRoutes);
 
 // Root route
 app.get('/', (req, res) => {

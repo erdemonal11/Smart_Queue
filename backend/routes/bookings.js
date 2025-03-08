@@ -7,7 +7,7 @@ const bookingController = require('../controllers/bookingController');
 router.post('/book', authenticateToken, bookingController.createBooking);
 
 // Cancel a booking
-router.post('/cancel/:bookingId', authenticateToken, bookingController.cancelBooking);
+router.post('/cancel/:id', authenticateToken, bookingController.cancelBooking);
 
 // Get user's bookings
 router.get('/user', authenticateToken, bookingController.getUserBookings);

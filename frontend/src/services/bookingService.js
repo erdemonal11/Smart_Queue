@@ -29,10 +29,10 @@ const bookingService = {
   },
 
   // Cancel a booking
-  cancelBooking: async (bookingId) => {
+  cancelBooking: async (id) => {
     try {
       const response = await axios.post(
-        `${API_URL}/cancel/${bookingId}`,
+        `${API_URL}/cancel/${id}`,
         {},
         getAuthHeader()
       );
@@ -47,11 +47,18 @@ const bookingService = {
     try {
       const response = await axios.get(
         `${API_URL}/user`,
-        getAuthHeader()
+        {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          }
+        }
       );
-      return response.data;
+      return response.data.map(booking => ({
+        ...booking,
+        qr_generated: booking.qr_generated === true
+      }));
     } catch (error) {
-      throw error.response?.data?.error || 'Failed to fetch bookings';
+      throw error.response?.data || error.message;
     }
   },
 

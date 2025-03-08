@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
-import { FaSignOutAlt, FaBuilding, FaEdit, FaCheck, FaTimes, FaEye, FaEyeSlash, FaTrash, FaClock, FaSpinner, FaCalendar } from 'react-icons/fa';
+import { FaSignOutAlt, FaBuilding, FaEdit, FaCheck, FaTimes, FaEye, FaEyeSlash, FaTrash, FaClock, FaSpinner, FaCalendar, FaQrcode, FaExclamationTriangle } from 'react-icons/fa';
 import { format } from 'date-fns';
 import DatePicker from 'react-datepicker';
 import "react-datepicker/dist/react-datepicker.css";
 import bookingService from '../services/bookingService';
 import organizationService from '../services/organizationService';
+import QRScanner from '../components/QRScanner';
 
 // Function to decode JWT token
 const parseJwt = (token) => {
@@ -65,6 +66,7 @@ const OrganizationDashboard = () => {
   const [isCreatingTimeSlot, setIsCreatingTimeSlot] = useState(false);
   const [selectedTimeSlot, setSelectedTimeSlot] = useState(null);
   const [refreshQueue, setRefreshQueue] = useState(0);
+  const [showScanner, setShowScanner] = useState(false);
 
   // Extract user ID from token if not available in user object
   useEffect(() => {
@@ -372,11 +374,14 @@ const OrganizationDashboard = () => {
 
     try {
       setQueueLoading(true);
-      await bookingService.cancelBooking(bookingId);
+      const response = await bookingService.cancelBooking(bookingId);
       setRefreshQueue(prev => prev + 1); // Trigger refresh
       alert('Booking cancelled successfully');
-    } catch (err) {
-      setError('Failed to cancel booking');
+    } catch (error) {
+      console.error('Error cancelling booking:', error);
+      const errorMessage = error.response?.data?.message || error.message || 'Failed to cancel booking';
+      setQueueError(errorMessage);
+      setTimeout(() => setQueueError(''), 3000);
     } finally {
       setQueueLoading(false);
     }
@@ -457,6 +462,26 @@ const OrganizationDashboard = () => {
 
     try {
       setTimeSlotError('');
+      
+      // First check if there are any active bookings for this time slot
+      const formattedDate = format(selectedDate, 'yyyy-MM-dd');
+      const queueData = await bookingService.getOrganizationQueue(profile.id, formattedDate);
+      
+      // Find bookings for this time slot
+      const hasActiveBookings = Object.entries(queueData).some(([timeSlotKey, bookings]) => {
+        const slot = timeSlots.find(s => 
+          `${s.start_time}-${s.end_time}` === timeSlotKey && 
+          s.id === slotId
+        );
+        return slot && bookings.some(b => b.status === 'Confirmed');
+      });
+
+      if (hasActiveBookings) {
+        setTimeSlotError('Cannot delete time slot: There are active bookings for this slot. Cancel all bookings first.');
+        return;
+      }
+
+      // If no active bookings, proceed with deletion
       const response = await organizationService.deleteTimeSlot(profile.id, slotId);
       
       if (response.message) {
@@ -467,7 +492,7 @@ const OrganizationDashboard = () => {
     } catch (error) {
       console.error('Error deleting time slot:', error);
       setTimeSlotError(
-        error.response?.data?.error || 
+        error.response?.data?.message || 
         error.message || 
         'Failed to delete time slot. Make sure there are no active bookings for this slot.'
       );
@@ -753,6 +778,13 @@ const OrganizationDashboard = () => {
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
                 <h2 className="text-xl font-bold text-gray-800 mb-4">Queue Management</h2>
                 <div className="flex items-center space-x-4">
+                  <button
+                    onClick={() => setShowScanner(true)}
+                    className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 flex items-center space-x-2"
+                  >
+                    <FaQrcode />
+                    <span>Scan QR Code</span>
+                  </button>
                   <DatePicker
                     selected={selectedDate}
                     onChange={handleDateChange}
@@ -760,6 +792,37 @@ const OrganizationDashboard = () => {
                     minDate={new Date()}
                     className="form-input rounded-md shadow-sm"
                   />
+                </div>
+              </div>
+
+              {/* Add Status Legend */}
+              <div className="mb-6 bg-gray-50 p-4 rounded-lg">
+                <h3 className="text-lg font-semibold text-gray-800 mb-3">Status Legend</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div className="flex items-center space-x-2">
+                    <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
+                      Confirmed
+                    </span>
+                    <span className="text-sm text-gray-600">Booking is active and confirmed</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
+                      Validated
+                    </span>
+                    <span className="text-sm text-gray-600">QR code has been scanned and verified</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-purple-100 text-purple-800">
+                      Checked In
+                    </span>
+                    <span className="text-sm text-gray-600">Customer has been checked in (cannot be cancelled)</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">
+                      Cancelled
+                    </span>
+                    <span className="text-sm text-gray-600">Booking has been cancelled</span>
+                  </div>
                 </div>
               </div>
 
@@ -821,22 +884,38 @@ const OrganizationDashboard = () => {
                                 <div className="text-sm text-gray-900">{booking.user_name}</div>
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap">
-                                <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full
-                                  ${booking.status === 'Confirmed' ? 'bg-green-100 text-green-800' : 
-                                    booking.status === 'Cancelled' ? 'bg-red-100 text-red-800' : 
-                                    'bg-yellow-100 text-yellow-800'}`}>
-                                  {booking.status}
-                                </span>
+                                <div className="flex flex-col space-y-2">
+                                  <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full
+                                    ${booking.status === 'Confirmed' ? 'bg-green-100 text-green-800' : 
+                                      booking.status === 'Cancelled' ? 'bg-red-100 text-red-800' : 
+                                      'bg-yellow-100 text-yellow-800'}`}>
+                                    {booking.status}
+                                  </span>
+                                  {booking.is_valid && (
+                                    <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
+                                      Validated
+                                    </span>
+                                  )}
+                                  {booking.is_checked_in && (
+                                    <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-purple-100 text-purple-800">
+                                      Checked In
+                                    </span>
+                                  )}
+                                </div>
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                                {booking.status === 'Confirmed' && (
+                                {booking.status === 'Confirmed' && !booking.is_checked_in && !booking.is_valid ? (
                                   <button
                                     onClick={() => handleCancelBooking(booking.booking_id)}
                                     className="text-red-600 hover:text-red-900"
                                   >
                                     Cancel
                                   </button>
-                                )}
+                                ) : booking.is_checked_in ? (
+                                  <span className="text-gray-400">Cannot Cancel - Checked In</span>
+                                ) : booking.is_valid ? (
+                                  <span className="text-gray-400">Cannot Cancel - Validated</span>
+                                ) : null}
                               </td>
                             </tr>
                           ))}
@@ -975,12 +1054,21 @@ const OrganizationDashboard = () => {
                               }`}>
                                 {slot.is_active ? 'Active' : 'Inactive'}
                               </span>
+                              {slot.available_spots === 0 && (
+                                <span className="ml-2 px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">
+                                  Full
+                                </span>
+                              )}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                               <button
                                 onClick={() => handleDeleteTimeSlot(slot.id)}
-                                className="text-red-600 hover:text-red-900"
+                                className="text-red-600 hover:text-red-900 flex items-center"
+                                title={slot.available_spots < slot.capacity ? "Warning: This slot has active bookings" : "Delete time slot"}
                               >
+                                {slot.available_spots < slot.capacity && (
+                                  <FaExclamationTriangle className="mr-1 text-yellow-500" />
+                                )}
                                 Delete
                               </button>
                             </td>
@@ -1043,6 +1131,14 @@ const OrganizationDashboard = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* QR Scanner Modal */}
+      {showScanner && (
+        <QRScanner onClose={() => {
+          setShowScanner(false);
+          fetchQueueData(); // Refresh queue data after scanning
+        }} />
       )}
     </div>
   );

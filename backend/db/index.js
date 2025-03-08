@@ -72,6 +72,10 @@ const initDatabase = async () => {
         time_slot_id INTEGER REFERENCES time_slots(id),
         date DATE NOT NULL,
         status VARCHAR(20) DEFAULT 'Confirmed',
+        qr_code TEXT UNIQUE,
+        is_valid BOOLEAN DEFAULT false,
+        is_checked_in BOOLEAN DEFAULT false,
+        qr_generated BOOLEAN DEFAULT false,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT valid_status CHECK (status IN ('Confirmed', 'Cancelled', 'Completed'))
       )
@@ -87,6 +91,7 @@ const initDatabase = async () => {
         time_slot_id INTEGER REFERENCES time_slots(id),
         date DATE NOT NULL,
         queue_position INTEGER NOT NULL,
+        check_in_attempts INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(organization_id, time_slot_id, date, queue_position)
       )

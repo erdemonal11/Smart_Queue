@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
-import { FaSignOutAlt, FaUser, FaEdit, FaCheck, FaTimes, FaEye, FaEyeSlash, FaTrash, FaClock, FaCalendar, FaSpinner } from 'react-icons/fa';
+import { FaSignOutAlt, FaUser, FaEdit, FaCheck, FaTimes, FaEye, FaEyeSlash, FaTrash, FaClock, FaCalendar, FaSpinner, FaQrcode } from 'react-icons/fa';
 import { format } from 'date-fns';
 import bookingService from '../services/bookingService';
 import userService from '../services/userService';
 import organizationService from '../services/organizationService';
 import DatePicker from 'react-datepicker';
 import "react-datepicker/dist/react-datepicker.css";
+import qrService from '../services/qrService';
+import { QRCodeSVG } from 'qrcode.react';
 
 const UserDashboard = () => {
   const { user, handleLogout } = useContext(AuthContext);
@@ -38,6 +40,10 @@ const UserDashboard = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filteredOrgs, setFilteredOrgs] = useState([]);
   const [showOrgResults, setShowOrgResults] = useState(false);
+  const [selectedBooking, setSelectedBooking] = useState(null);
+  const [qrCode, setQrCode] = useState(null);
+  const [qrError, setQrError] = useState('');
+  const [showQRModal, setShowQRModal] = useState(false);
 
   useEffect(() => {
     fetchUserProfile();
@@ -95,6 +101,7 @@ const UserDashboard = () => {
     try {
       setLoading(true);
       const data = await bookingService.getUserBookings();
+      console.log('Fetched bookings:', data); // Debug log
       setBookings(data);
     } catch (err) {
       setError('Failed to fetch your bookings');
@@ -225,6 +232,43 @@ const UserDashboard = () => {
     }
   };
 
+  const handleGenerateQR = async (booking) => {
+    setQrError('');
+    try {
+      let qrCodeData;
+      if (booking.qr_generated) {
+        // If QR is already generated, just get it
+        qrCodeData = await qrService.getQRCode(booking.id);
+      } else {
+        // Generate new QR code
+        qrCodeData = await qrService.generateQRCode(booking.id);
+      }
+      
+      if (qrCodeData) {
+        setQrCode(qrCodeData);
+        setSelectedBooking(booking);
+        setShowQRModal(true);
+        // Only refresh bookings if we generated a new QR code
+        if (!booking.qr_generated) {
+          await fetchUserBookings();
+        }
+      }
+    } catch (error) {
+      console.error('Error with QR code:', error);
+      setQrError(error.message || 'Failed to handle QR code');
+      setTimeout(() => setQrError(''), 3000);
+    }
+  };
+
+  const handleDownloadPDF = async (bookingId) => {
+    try {
+      await qrService.generatePDF(bookingId);
+    } catch (error) {
+      setError('Failed to download PDF');
+      setTimeout(() => setError(''), 3000);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
@@ -281,6 +325,19 @@ const UserDashboard = () => {
               <button
                 className="absolute top-0 bottom-0 right-0 px-4 py-3"
                 onClick={() => setError('')}
+              >
+                <FaTimes />
+              </button>
+            </div>
+          )}
+
+          {qrError && (
+            <div className="mb-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative">
+              <strong className="font-bold">QR Error: </strong>
+              <span className="block sm:inline">{qrError}</span>
+              <button
+                className="absolute top-0 bottom-0 right-0 px-4 py-3"
+                onClick={() => setQrError('')}
               >
                 <FaTimes />
               </button>
@@ -553,6 +610,37 @@ const UserDashboard = () => {
         <div className="bg-white rounded-lg shadow-md p-4 sm:p-6">
           <h2 className="text-xl font-bold text-gray-800 mb-4">My Bookings</h2>
           
+          {/* Add Status Legend */}
+          <div className="mb-6 bg-gray-50 p-4 rounded-lg">
+            <h3 className="text-lg font-semibold text-gray-800 mb-3">Status Legend</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="flex items-center space-x-2">
+                <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
+                  Confirmed
+                </span>
+                <span className="text-sm text-gray-600">Your booking has been confirmed</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
+                  Validated
+                </span>
+                <span className="text-sm text-gray-600">QR code has been scanned by organization</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-purple-100 text-purple-800">
+                  Checked In
+                </span>
+                <span className="text-sm text-gray-600">You have been checked in at the venue</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">
+                  Cancelled
+                </span>
+                <span className="text-sm text-gray-600">Booking has been cancelled</span>
+              </div>
+            </div>
+          </div>
+          
           {error && (
             <div className="mb-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative">
               <strong className="font-bold">Error: </strong>
@@ -560,6 +648,19 @@ const UserDashboard = () => {
               <button
                 className="absolute top-0 bottom-0 right-0 px-4 py-3"
                 onClick={() => setError('')}
+              >
+                <FaTimes />
+              </button>
+            </div>
+          )}
+
+          {qrError && (
+            <div className="mb-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative">
+              <strong className="font-bold">QR Error: </strong>
+              <span className="block sm:inline">{qrError}</span>
+              <button
+                className="absolute top-0 bottom-0 right-0 px-4 py-3"
+                onClick={() => setQrError('')}
               >
                 <FaTimes />
               </button>
@@ -617,21 +718,63 @@ const UserDashboard = () => {
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full
-                          ${booking.status === 'Confirmed' ? 'bg-green-100 text-green-800' : 
-                            booking.status === 'Cancelled' ? 'bg-red-100 text-red-800' : 
-                            'bg-yellow-100 text-yellow-800'}`}>
-                          {booking.status}
-                        </span>
+                        <div className="flex flex-col space-y-2">
+                          <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full
+                            ${booking.status === 'Confirmed' ? 'bg-green-100 text-green-800' : 
+                              booking.status === 'Cancelled' ? 'bg-red-100 text-red-800' : 
+                              'bg-yellow-100 text-yellow-800'}`}>
+                            {booking.status}
+                          </span>
+                          {booking.is_valid && (
+                            <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
+                              Validated
+                            </span>
+                          )}
+                          {booking.is_checked_in && (
+                            <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-purple-100 text-purple-800">
+                              Checked In
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        {booking.status === 'Confirmed' && (
-                          <button
-                            onClick={() => handleCancelBooking(booking.id)}
-                            className="text-red-600 hover:text-red-900"
-                          >
-                            Cancel
-                          </button>
+                        {booking.status === 'Confirmed' && !booking.is_checked_in && (
+                          <div className="flex flex-col space-y-2">
+                            {booking.qr_generated === true ? (
+                              <>
+                                <button
+                                  onClick={() => handleDownloadPDF(booking.id)}
+                                  className="text-green-600 hover:text-green-900 flex items-center"
+                                >
+                                  <FaCalendar className="mr-1" /> Download PDF
+                                </button>
+                                <button
+                                  onClick={() => handleGenerateQR(booking)}
+                                  className="text-blue-600 hover:text-blue-900 flex items-center"
+                                >
+                                  <FaQrcode className="mr-1" /> Show QR
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => handleGenerateQR(booking)}
+                                  className="text-blue-600 hover:text-blue-900 flex items-center"
+                                >
+                                  <FaQrcode className="mr-1" /> Generate QR
+                                </button>
+                                <button
+                                  onClick={() => handleCancelBooking(booking.id)}
+                                  className="text-red-600 hover:text-red-900 flex items-center"
+                                >
+                                  <FaTimes className="mr-1" /> Cancel
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        )}
+                        {booking.status === 'Confirmed' && booking.is_checked_in && (
+                          <span className="text-gray-400">Checked In</span>
                         )}
                       </td>
                     </tr>
@@ -688,6 +831,50 @@ const UserDashboard = () => {
                 className="px-6 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors duration-200"
               >
                 Delete Account
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add QR Code Modal */}
+      {selectedBooking && qrCode && (
+        <div className="fixed inset-0 bg-gradient-to-br from-black/70 to-gray-900/70 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-white p-8 rounded-xl shadow-2xl max-w-md w-full mx-4">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold text-gray-800">Booking QR Code</h2>
+              <button
+                onClick={() => {
+                  setSelectedBooking(null);
+                  setQrCode(null);
+                }}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <FaTimes />
+              </button>
+            </div>
+
+            <div className="flex flex-col items-center">
+              <div className="bg-white p-4 rounded-lg shadow-lg">
+                <QRCodeSVG 
+                  value={qrCode.qrCode}
+                  size={200}
+                  level="M"
+                  includeMargin={true}
+                  renderAs="svg"
+                />
+              </div>
+              <div className="mt-6 text-center space-y-2">
+                <p className="text-lg font-semibold text-gray-800">{selectedBooking.organization_name}</p>
+                <p className="text-gray-600">{format(new Date(selectedBooking.date), 'MMMM d, yyyy')}</p>
+                <p className="text-gray-600">{selectedBooking.time_slot}</p>
+                <p className="text-gray-600 font-medium">Queue Position: #{selectedBooking.queue_position}</p>
+              </div>
+              <button
+                onClick={() => handleDownloadPDF(selectedBooking.id)}
+                className="mt-6 px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors duration-200 flex items-center space-x-2"
+              >
+                <span>Download PDF</span>
               </button>
             </div>
           </div>

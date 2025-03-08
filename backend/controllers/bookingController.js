@@ -95,84 +95,111 @@ const bookingController = {
 
   // Cancel a booking
   cancelBooking: async (req, res) => {
-    const { bookingId } = req.params;
+    const { id } = req.params;
     const userId = req.user.id;
     const userRole = req.user.role;
 
     try {
-      // Start a transaction
-      const client = await db.pool.connect();
+      // Begin transaction
+      await db.query('BEGIN');
+
       try {
-        await client.query('BEGIN');
+        // First check if the booking exists at all
+        const bookingCheck = await db.query(
+          'SELECT id, status, organization_id FROM bookings WHERE id = $1',
+          [id]
+        );
 
-        // Get booking details with organization info
-        const bookingResult = await client.query(
-          `SELECT b.*, o.id as org_id 
+        if (bookingCheck.rows.length === 0) {
+          throw new Error('Booking does not exist');
+        }
+
+        if (bookingCheck.rows[0].status === 'Cancelled') {
+          throw new Error('Booking is already cancelled');
+        }
+
+        // Now check authorization and get queue details
+        const { rows } = await db.query(
+          `SELECT b.*, q.id as queue_id, q.queue_position, q.date, b.time_slot_id, b.organization_id,
+                  b.is_checked_in, b.is_valid
            FROM bookings b
-           JOIN organizations o ON b.organization_id = o.id
+           LEFT JOIN queue q ON b.id = q.booking_id
            WHERE b.id = $1`,
-          [bookingId]
+          [id]
         );
 
-        if (bookingResult.rows.length === 0) {
-          throw new Error('Booking not found');
+        const booking = rows[0];
+
+        // Check authorization based on role
+        if (userRole === 'organization') {
+          // Organizations can only cancel bookings for their own time slots
+          if (booking.organization_id !== userId) {
+            throw new Error('You are not authorized to cancel bookings for other organizations');
+          }
+        } else {
+          // Regular users can only cancel their own bookings
+          if (booking.user_id !== userId) {
+            throw new Error('You are not authorized to cancel this booking');
+          }
         }
 
-        const booking = bookingResult.rows[0];
-
-        // Check authorization
-        if (userRole === 'user' && booking.user_id !== userId) {
-          throw new Error('Unauthorized to cancel this booking');
-        } else if (userRole === 'organization' && booking.org_id !== userId) {
-          throw new Error('Unauthorized to cancel this booking');
+        // Check if booking is already validated or checked in
+        if (booking.is_valid || booking.is_checked_in) {
+          throw new Error('Cannot cancel booking after validation or check-in');
         }
 
-        // Get queue position before removal
-        const queueResult = await client.query(
-          `SELECT queue_position, time_slot_id FROM queue WHERE booking_id = $1`,
-          [bookingId]
-        );
-
-        if (queueResult.rows.length > 0) {
-          const { queue_position: canceledPosition, time_slot_id: timeSlotId } = queueResult.rows[0];
-
-          // Remove from queue
-          await client.query(
-            `DELETE FROM queue WHERE booking_id = $1`,
-            [bookingId]
+        // If booking has a queue position, update other queue positions
+        if (booking.queue_position) {
+          // First, get all affected queue entries ordered by position
+          const affectedQueues = await db.query(
+            `SELECT id, queue_position 
+             FROM queue 
+             WHERE date = $1 
+             AND time_slot_id = $2 
+             AND organization_id = $3 
+             AND queue_position > $4
+             ORDER BY queue_position ASC`,
+            [booking.date, booking.time_slot_id, booking.organization_id, booking.queue_position]
           );
 
-          // Update other queue positions
-          await client.query(
-            `UPDATE queue q
-             SET queue_position = queue_position - 1 
-             FROM bookings b
-             WHERE q.booking_id = b.id
-             AND q.organization_id = $1 
-             AND q.date = $2 
-             AND b.time_slot_id = $3 
-             AND q.queue_position > $4`,
-            [booking.organization_id, booking.date, timeSlotId, canceledPosition]
-          );
+          // Delete the queue entry for this booking first
+          if (booking.queue_id) {
+            await db.query('DELETE FROM queue WHERE id = $1', [booking.queue_id]);
+          }
+
+          // Update each affected queue entry one by one
+          for (const queue of affectedQueues.rows) {
+            await db.query(
+              `UPDATE queue 
+               SET queue_position = $1 
+               WHERE id = $2`,
+              [queue.queue_position - 1, queue.id]
+            );
+          }
         }
 
-        // Update booking status
-        await client.query(
-          `UPDATE bookings SET status = 'Cancelled' WHERE id = $1`,
-          [bookingId]
+        // Update booking status to Cancelled instead of deleting
+        await db.query(
+          `UPDATE bookings 
+           SET status = 'Cancelled' 
+           WHERE id = $1`,
+          [id]
         );
 
-        await client.query('COMMIT');
+        // Commit transaction
+        await db.query('COMMIT');
+
         res.json({ message: 'Booking cancelled successfully' });
       } catch (err) {
-        await client.query('ROLLBACK');
+        // Rollback in case of error
+        await db.query('ROLLBACK');
         throw err;
-      } finally {
-        client.release();
       }
     } catch (error) {
       console.error('Error cancelling booking:', error);
-      res.status(400).json({ error: error.message });
+      res.status(error.message.includes('not authorized') ? 403 : 400).json({ 
+        message: error.message || 'Failed to cancel booking' 
+      });
     }
   },
 
@@ -184,6 +211,9 @@ const bookingController = {
           b.id,
           b.date,
           b.status,
+          b.is_valid,
+          b.is_checked_in,
+          b.qr_generated,
           o.name as organization_name,
           o.location,
           q.queue_position,
@@ -217,7 +247,7 @@ const bookingController = {
 
     try {
       const result = await db.query(
-        `SELECT q.*, u.name as user_name, b.status, ts.start_time, ts.end_time
+        `SELECT q.*, u.name as user_name, b.status, b.is_valid, b.is_checked_in, ts.start_time, ts.end_time
          FROM queue q
          JOIN users u ON q.user_id = u.id
          JOIN bookings b ON q.booking_id = b.id

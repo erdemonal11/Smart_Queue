@@ -445,30 +445,52 @@ const deleteTimeSlot = async (req, res) => {
   const { id, slotId } = req.params;
 
   try {
-    // Check if there are any active bookings for this time slot
-    const bookingCheck = await db.query(
-      `SELECT COUNT(*) FROM bookings 
-       WHERE organization_id = $2 AND time_slot_id = $1 AND status = 'Confirmed'`,
+    // First check if the time slot exists and belongs to the organization
+    const slotCheck = await db.query(
+      'SELECT * FROM time_slots WHERE id = $1 AND organization_id = $2',
       [slotId, id]
     );
 
-    if (parseInt(bookingCheck.rows[0].count) > 0) {
-      return res.status(400).json({ 
-        error: 'Cannot delete time slot with active bookings. Please cancel all bookings first.' 
-      });
+    if (slotCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Time slot not found or does not belong to this organization' });
     }
 
-    // Delete the time slot
-    const result = await db.query(
-      'DELETE FROM time_slots WHERE id = $1 AND organization_id = $2 RETURNING *',
-      [slotId, id]
-    );
+    // Begin a transaction
+    await db.query('BEGIN');
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Time slot not found' });
+    try {
+      // First delete queue entries for bookings in this time slot
+      await db.query(
+        `DELETE FROM queue 
+         WHERE booking_id IN (
+           SELECT id FROM bookings 
+           WHERE time_slot_id = $1 AND organization_id = $2
+         )`,
+        [slotId, id]
+      );
+
+      // Then delete all bookings for this time slot
+      await db.query(
+        `DELETE FROM bookings 
+         WHERE time_slot_id = $1 AND organization_id = $2`,
+        [slotId, id]
+      );
+
+      // Finally delete the time slot
+      await db.query(
+        'DELETE FROM time_slots WHERE id = $1 AND organization_id = $2',
+        [slotId, id]
+      );
+
+      // Commit the transaction
+      await db.query('COMMIT');
+
+      res.json({ message: 'Time slot deleted successfully' });
+    } catch (err) {
+      // If anything fails, rollback the transaction
+      await db.query('ROLLBACK');
+      throw err;
     }
-
-    res.json({ message: 'Time slot deleted successfully' });
   } catch (error) {
     console.error('Error deleting time slot:', error);
     res.status(500).json({ error: 'Failed to delete time slot' });
