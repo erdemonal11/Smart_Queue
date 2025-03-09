@@ -17,7 +17,7 @@ app.use(express.urlencoded({ extended: true }));
 // Import routes
 const userRoutes = require('./routes/userRoutes');
 const adminRoutes = require('./routes/adminRoutes');
-const organizationRoutes = require('./routes/organizations');
+const organizationRoutes = require('./routes/organizationRoutes');
 const bookingRoutes = require('./routes/bookings');
 const qrRoutes = require('./routes/qrRoutes');
 const messageRoutes = require('./routes/messageRoutes');

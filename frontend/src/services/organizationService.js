@@ -131,11 +131,18 @@ const organizationService = {
     }
   },
 
-  downloadOrganizationData: async (organizationId, format = 'json') => {
+  downloadOrganizationData: async (format = 'json') => {
     try {
+      // Get user data and token
+      const user = JSON.parse(localStorage.getItem('user'));
       const token = localStorage.getItem('token');
-      if (!token) {
-        throw new Error('No authentication token found');
+
+      if (!user || !token) {
+        throw new Error('You must be logged in to download data');
+      }
+
+      if (user.role !== 'organization') {
+        throw new Error('Only organizations can download their data');
       }
 
       const response = await axios.get(
@@ -145,41 +152,50 @@ const organizationService = {
             'Authorization': `Bearer ${token}`,
             'Accept': format === 'csv' ? 'text/csv' : 'application/json'
           },
-          responseType: format === 'csv' ? 'blob' : 'json'
+          responseType: 'blob'
         }
       );
 
-      if (format === 'csv') {
-        // Handle CSV download
-        const blob = new Blob([response.data], { type: 'text/csv' });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `organization-data.${format}`;
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
-      } else {
-        // Handle JSON download
-        const blob = new Blob([JSON.stringify(response.data, null, 2)], { type: 'application/json' });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `organization-data.${format}`;
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
+      // Check if the response is an error message
+      const contentType = response.headers['content-type'];
+      if (contentType && contentType.includes('application/json')) {
+        // Convert blob to text to check for error message
+        const text = await response.data.text();
+        try {
+          const errorData = JSON.parse(text);
+          if (errorData.error) {
+            throw new Error(errorData.error);
+          }
+        } catch (e) {
+          // If parsing fails, it's probably not an error message
+          console.log('Response is not an error message');
+        }
       }
+
+      // Create blob and trigger download
+      const blob = new Blob([response.data], { 
+        type: format === 'csv' ? 'text/csv' : 'application/json' 
+      });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `organization-data.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
 
       return true;
     } catch (error) {
       console.error('Error downloading data:', error);
-      if (error.response?.status === 403) {
-        throw new Error('Access denied. Please log in again.');
+      if (error.response?.status === 401) {
+        throw new Error('Please log in again to download your data');
+      } else if (error.response?.status === 403) {
+        throw new Error('You do not have permission to download this data');
+      } else if (error.response?.status === 404) {
+        throw new Error('Organization data not found');
       }
-      throw error.message || 'Failed to download data';
+      throw new Error(error.message || 'Failed to download data');
     }
   }
 };

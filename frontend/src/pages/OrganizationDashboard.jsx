@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
-import { FaSignOutAlt, FaBuilding, FaEdit, FaCheck, FaTimes, FaEye, FaEyeSlash, FaTrash, FaClock, FaSpinner, FaCalendar, FaQrcode, FaExclamationTriangle, FaComments, FaInfoCircle, FaPlus, FaExclamationCircle } from 'react-icons/fa';
+import { FaSignOutAlt, FaBuilding, FaEdit, FaCheck, FaTimes, FaEye, FaEyeSlash, FaTrash, FaClock, FaSpinner, FaCalendar, FaQrcode, FaExclamationTriangle, FaComments, FaInfoCircle, FaPlus, FaExclamationCircle, FaDownload, FaFileAlt } from 'react-icons/fa';
 import { format } from 'date-fns';
 import DatePicker from 'react-datepicker';
 import "react-datepicker/dist/react-datepicker.css";
@@ -72,6 +72,9 @@ const OrganizationDashboard = () => {
   const [successMessage, setSuccessMessage] = useState('');
   const [hasActiveBookings, setHasActiveBookings] = useState(false);
   const [hasActiveTimeSlots, setHasActiveTimeSlots] = useState(false);
+  const [showDownloadModal, setShowDownloadModal] = useState(false);
+  const [downloadFormat, setDownloadFormat] = useState('json');
+  const [isDownloading, setIsDownloading] = useState(false);
 
   // Extract user ID from token if not available in user object
   useEffect(() => {
@@ -568,6 +571,28 @@ const OrganizationDashboard = () => {
     }
   };
 
+  const handleDownloadData = async (format) => {
+    try {
+      setIsDownloading(true);
+      setError('');
+      await organizationService.downloadOrganizationData(format);
+      setShowDownloadModal(false);
+    } catch (error) {
+      console.error('Error downloading data:', error);
+      setError(error.message || 'Failed to download data. Please try again.');
+      
+      // If authentication error, redirect to login
+      if (error.message.includes('Access denied') || error.message.includes('authentication')) {
+        setTimeout(() => {
+          handleLogout();
+          navigate('/login');
+        }, 2000);
+      }
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-100">
       {loading ? (
@@ -628,28 +653,42 @@ const OrganizationDashboard = () => {
 
         <div className="max-w-7xl mx-auto px-4 py-8">
           {/* Organization Profile Section */}
-          <div className="bg-white rounded-lg shadow-md p-4 sm:p-6 mb-6">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
-              <h2 className="text-xl font-bold text-gray-800 flex items-center mb-2 sm:mb-0">
-                <FaBuilding className="mr-2 text-indigo-600" /> Organization Profile
+          <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 border-b pb-4">
+              <h2 className="text-2xl font-bold text-gray-800 flex items-center">
+                <FaBuilding className="mr-3 text-indigo-600" /> Organization Profile
               </h2>
               {!isEditing && (
-                <div className="flex space-x-3">
+                <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 mt-4 sm:mt-0 w-full sm:w-auto">
                   <button
                     onClick={() => setIsEditing(true)}
-                    className="flex items-center space-x-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors duration-200 shadow-sm"
+                    className="flex items-center justify-center space-x-2 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white px-4 py-2 rounded-xl hover:from-indigo-700 hover:to-indigo-800 transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 text-sm w-full sm:w-auto"
                   >
-                    <FaEdit className="text-white" /> 
-                    <span>Edit Profile</span>
+                    <FaEdit className="text-base" /> <span>Edit Profile</span>
+                  </button>
+                  <button
+                    onClick={() => setShowDownloadModal(true)}
+                    className="flex items-center justify-center space-x-2 bg-gradient-to-r from-green-600 to-green-700 text-white px-4 py-2 rounded-xl hover:from-green-700 hover:to-green-800 transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 text-sm w-full sm:w-auto"
+                  >
+                    <FaDownload className="text-base" /> <span>Download Data</span>
                   </button>
                   <button
                     onClick={handleShowDeactivateModal}
-                    className="flex items-center space-x-2 border border-red-200 text-red-600 px-4 py-2 rounded-lg hover:bg-red-50 transition-colors duration-200"
+                    disabled={hasActiveBookings || hasActiveTimeSlots}
+                    className={`flex items-center justify-center space-x-2 px-4 py-2 rounded-xl transition-all duration-200 shadow-md text-sm w-full sm:w-auto ${
+                      hasActiveBookings || hasActiveTimeSlots
+                        ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                        : 'bg-gradient-to-r from-orange-500 to-orange-600 text-white hover:from-orange-600 hover:to-orange-700 hover:shadow-lg transform hover:-translate-y-0.5'
+                    }`}
+                    title={
+                      hasActiveBookings
+                        ? 'Cannot deactivate account while you have active bookings'
+                        : hasActiveTimeSlots
+                        ? 'Cannot deactivate account while you have active time slots'
+                        : 'Deactivate Account'
+                    }
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M13.477 14.89A6 6 0 015.11 6.524l8.367 8.368zm1.414-1.414L6.524 5.11a6 6 0 018.367 8.367zM18 10a8 8 0 11-16 0 8 8 0 0116 0z" clipRule="evenodd" />
-                    </svg>
-                    <span>Deactivate Account</span>
+                    <FaTrash className="text-base" /> <span>Deactivate Account</span>
                   </button>
                 </div>
               )}
@@ -1290,6 +1329,96 @@ const OrganizationDashboard = () => {
           setShowScanner(false);
           fetchQueueData(); // Refresh queue data after scanning
         }} />
+      )}
+
+      {/* Download Data Modal */}
+      {showDownloadModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-white p-8 rounded-2xl shadow-2xl max-w-md w-full mx-4 transform transition-all">
+            <div className="flex items-center space-x-4 mb-6">
+              <div className="bg-green-100 p-3 rounded-full">
+                <FaDownload className="text-2xl text-green-600" />
+              </div>
+              <h3 className="text-2xl font-bold text-gray-800">Download Organization Data</h3>
+            </div>
+
+            <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-r mb-6">
+              <div className="flex items-center">
+                <FaFileAlt className="text-blue-500 text-lg mr-3" />
+                <p className="text-sm text-blue-700">
+                  Your data export will include:
+                </p>
+              </div>
+              <ul className="mt-2 ml-8 list-disc text-sm text-blue-700">
+                <li>Organization profile information</li>
+                <li>Time slot configurations</li>
+                <li>Customer booking records</li>
+                <li>Queue management history</li>
+                <li>Message history with customers</li>
+              </ul>
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Select Format</label>
+              <div className="grid grid-cols-2 gap-4">
+                <button
+                  onClick={() => setDownloadFormat('json')}
+                  className={`p-4 rounded-xl border-2 transition-all duration-200 ${
+                    downloadFormat === 'json'
+                      ? 'border-green-500 bg-green-50 text-green-700'
+                      : 'border-gray-200 hover:border-gray-300 text-gray-600'
+                  }`}
+                >
+                  <div className="text-center">
+                    <FaFileAlt className="mx-auto text-xl mb-2" />
+                    <div className="font-medium">JSON</div>
+                    <div className="text-xs mt-1">Complete data structure</div>
+                  </div>
+                </button>
+                <button
+                  onClick={() => setDownloadFormat('csv')}
+                  className={`p-4 rounded-xl border-2 transition-all duration-200 ${
+                    downloadFormat === 'csv'
+                      ? 'border-green-500 bg-green-50 text-green-700'
+                      : 'border-gray-200 hover:border-gray-300 text-gray-600'
+                  }`}
+                >
+                  <div className="text-center">
+                    <FaFileAlt className="mx-auto text-xl mb-2" />
+                    <div className="font-medium">CSV</div>
+                    <div className="text-xs mt-1">Spreadsheet format</div>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            <div className="flex justify-end space-x-4">
+              <button
+                onClick={() => setShowDownloadModal(false)}
+                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-all duration-200 shadow-sm hover:shadow-md transform hover:-translate-y-0.5 text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDownloadData(downloadFormat)}
+                disabled={isDownloading}
+                className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-xl hover:from-green-600 hover:to-green-700 transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isDownloading ? (
+                  <>
+                    <FaSpinner className="animate-spin text-base" />
+                    <span>Downloading...</span>
+                  </>
+                ) : (
+                  <>
+                    <FaDownload className="text-base" />
+                    <span>Download</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
