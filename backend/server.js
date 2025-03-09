@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const db = require('./db');
-const bookingRoutes = require('./routes/bookings');
 
 // Load environment variables
 dotenv.config();
@@ -19,7 +18,9 @@ app.use(express.urlencoded({ extended: true }));
 const userRoutes = require('./routes/userRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const organizationRoutes = require('./routes/organizations');
+const bookingRoutes = require('./routes/bookings');
 const qrRoutes = require('./routes/qrRoutes');
+const messageRoutes = require('./routes/messageRoutes');
 
 // Route middleware
 app.use('/api/users', userRoutes);
@@ -27,6 +28,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/organizations', organizationRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/qr', qrRoutes);
+app.use('/api/messages', messageRoutes);
 
 // Root route
 app.get('/', (req, res) => {

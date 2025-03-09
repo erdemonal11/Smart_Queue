@@ -64,7 +64,7 @@ const organizationService = {
     }
   },
 
-  // Delete organization account
+  // Deactivate organization account
   deleteOrganization: async (organizationId) => {
     try {
       const response = await axios.delete(
@@ -73,7 +73,15 @@ const organizationService = {
       );
       return response.data;
     } catch (error) {
-      throw error.response?.data?.error || 'Failed to delete organization';
+      if (error.response?.status === 400) {
+        if (error.response.data?.error?.includes('active bookings')) {
+          throw new Error('Cannot deactivate account: You have active bookings. Please cancel or complete all active bookings first.');
+        }
+        if (error.response.data?.error?.includes('active time slots')) {
+          throw new Error('Cannot deactivate account: You have active time slots. Please deactivate all time slots first.');
+        }
+      }
+      throw error.response?.data?.error || 'Failed to deactivate organization account';
     }
   },
 

@@ -106,7 +106,7 @@ const bookingController = {
       try {
         // First check if the booking exists at all
         const bookingCheck = await db.query(
-          'SELECT id, status, organization_id FROM bookings WHERE id = $1',
+          'SELECT id, status, organization_id, user_id FROM bookings WHERE id = $1',
           [id]
         );
 
@@ -184,6 +184,14 @@ const bookingController = {
            SET status = 'Cancelled' 
            WHERE id = $1`,
           [id]
+        );
+
+        // Add system message about cancellation
+        const systemMessage = `Booking cancelled by ${userRole === 'organization' ? 'organization' : 'user'}. Messaging is now disabled.`;
+        await db.query(
+          `INSERT INTO messages (sender_id, receiver_id, booking_id, message, is_system_message)
+           VALUES ($1, $2, $3, $4, TRUE)`,
+          [userId, booking.user_id === userId ? booking.organization_id : booking.user_id, id, systemMessage]
         );
 
         // Commit transaction

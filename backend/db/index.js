@@ -97,6 +97,19 @@ const initDatabase = async () => {
       )
     `);
 
+    // Create messages table for communication
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS messages (
+        id SERIAL PRIMARY KEY,
+        sender_id INTEGER NOT NULL,
+        receiver_id INTEGER NOT NULL,
+        booking_id INTEGER NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+        message TEXT NOT NULL,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        is_system_message BOOLEAN DEFAULT FALSE
+      )
+    `);
+
     // Create indexes for better query performance
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_bookings_org_date ON bookings(organization_id, date);
@@ -104,6 +117,9 @@ const initDatabase = async () => {
       CREATE INDEX IF NOT EXISTS idx_bookings_user ON bookings(user_id);
       CREATE INDEX IF NOT EXISTS idx_queue_booking ON queue(booking_id);
       CREATE INDEX IF NOT EXISTS idx_timeslots_org ON time_slots(organization_id);
+      CREATE INDEX IF NOT EXISTS idx_messages_booking ON messages(booking_id);
+      CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id);
+      CREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages(receiver_id);
     `);
 
     console.log('Database tables initialized successfully');
