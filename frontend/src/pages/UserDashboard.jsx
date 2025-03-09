@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
-import { FaSignOutAlt, FaUser, FaEdit, FaCheck, FaTimes, FaEye, FaEyeSlash, FaTrash, FaClock, FaCalendar, FaSpinner, FaQrcode, FaComments, FaSearch, FaCalendarAlt, FaPowerOff, FaExclamationTriangle, FaCalendarPlus } from 'react-icons/fa';
+import { FaSignOutAlt, FaUser, FaEdit, FaCheck, FaTimes, FaEye, FaEyeSlash, FaTrash, FaClock, FaCalendar, FaSpinner, FaQrcode, FaComments, FaSearch, FaCalendarAlt, FaPowerOff, FaExclamationTriangle, FaCalendarPlus, FaDownload, FaFileAlt } from 'react-icons/fa';
 import { format } from 'date-fns';
 import bookingService from '../services/bookingService';
 import userService from '../services/userService';
@@ -45,6 +45,9 @@ const UserDashboard = () => {
   const [qrCode, setQrCode] = useState(null);
   const [qrError, setQrError] = useState('');
   const [showQRModal, setShowQRModal] = useState(false);
+  const [showDownloadModal, setShowDownloadModal] = useState(false);
+  const [downloadFormat, setDownloadFormat] = useState('json');
+  const [isDownloading, setIsDownloading] = useState(false);
 
   useEffect(() => {
     fetchUserProfile();
@@ -158,6 +161,25 @@ const UserDashboard = () => {
 
   const handleDeleteAccount = async () => {
     try {
+      // Double check for active bookings
+      const hasActiveBookings = bookings.some(booking => booking.status === 'Confirmed' && !booking.is_checked_in);
+      
+      if (hasActiveBookings) {
+        setError('Cannot deactivate account: You have active bookings. Please cancel or complete all active bookings first.');
+        setShowDeleteConfirm(false);
+        return;
+      }
+
+      // Additional safety check before proceeding
+      const currentBookings = await bookingService.getUserBookings();
+      const stillHasActiveBookings = currentBookings.some(booking => booking.status === 'Confirmed' && !booking.is_checked_in);
+      
+      if (stillHasActiveBookings) {
+        setError('Cannot deactivate account: You have active bookings. Please cancel or complete all active bookings first.');
+        setShowDeleteConfirm(false);
+        return;
+      }
+
       await userService.deleteUser(user.id);
       handleLogout();
       navigate('/');
@@ -270,6 +292,40 @@ const UserDashboard = () => {
     }
   };
 
+  const handleShowDeactivateModal = () => {
+    // Check for active bookings before showing modal
+    const hasActiveBookings = bookings.some(booking => booking.status === 'Confirmed' && !booking.is_checked_in);
+    
+    if (hasActiveBookings) {
+      setError('Cannot deactivate account: You have active bookings. Please cancel or complete all active bookings first.');
+      return;
+    }
+    
+    setShowDeleteConfirm(true);
+  };
+
+  const handleDownloadData = async (format) => {
+    try {
+      setIsDownloading(true);
+      setError('');
+      await userService.downloadUserData(user.id, format);
+      setShowDownloadModal(false);
+    } catch (error) {
+      console.error('Error downloading data:', error);
+      setError(error.message || 'Failed to download data. Please try again.');
+      
+      // If authentication error, redirect to login
+      if (error.message.includes('Access denied') || error.message.includes('authentication')) {
+        setTimeout(() => {
+          handleLogout();
+          navigate('/login');
+        }, 2000);
+      }
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
@@ -296,22 +352,36 @@ const UserDashboard = () => {
       </nav>
 
       <div className="max-w-7xl mx-auto px-4 py-8">
-        <div className="bg-white rounded-lg shadow-md p-6">
+        <div className="bg-white rounded-lg shadow-md p-6 mb-6">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 border-b pb-4">
             <h2 className="text-2xl font-bold text-gray-800 flex items-center">
               <FaUser className="mr-3 text-indigo-600" /> My Profile
             </h2>
             {!isEditing && (
-              <div className="flex space-x-3 mt-4 sm:mt-0">
+              <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 mt-4 sm:mt-0 w-full sm:w-auto">
                 <button
                   onClick={() => setIsEditing(true)}
-                  className="flex items-center space-x-2 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white px-4 py-2 rounded-xl hover:from-indigo-700 hover:to-indigo-800 transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 text-sm"
+                  className="flex items-center justify-center space-x-2 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white px-4 py-2 rounded-xl hover:from-indigo-700 hover:to-indigo-800 transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 text-sm w-full sm:w-auto"
                 >
                   <FaEdit className="text-base" /> <span>Edit Profile</span>
                 </button>
                 <button
-                  onClick={() => setShowDeleteConfirm(true)}
-                  className="flex items-center space-x-2 bg-gradient-to-r from-orange-500 to-orange-600 text-white px-4 py-2 rounded-xl hover:from-orange-600 hover:to-orange-700 transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 text-sm"
+                  onClick={() => setShowDownloadModal(true)}
+                  className="flex items-center justify-center space-x-2 bg-gradient-to-r from-green-600 to-green-700 text-white px-4 py-2 rounded-xl hover:from-green-700 hover:to-green-800 transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 text-sm w-full sm:w-auto"
+                >
+                  <FaDownload className="text-base" /> <span>Download My Data</span>
+                </button>
+                <button
+                  onClick={handleShowDeactivateModal}
+                  disabled={bookings.some(booking => booking.status === 'Confirmed' && !booking.is_checked_in)}
+                  className={`flex items-center justify-center space-x-2 px-4 py-2 rounded-xl transition-all duration-200 shadow-md text-sm w-full sm:w-auto ${
+                    bookings.some(booking => booking.status === 'Confirmed' && !booking.is_checked_in)
+                      ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                      : 'bg-gradient-to-r from-orange-500 to-orange-600 text-white hover:from-orange-600 hover:to-orange-700 hover:shadow-lg transform hover:-translate-y-0.5'
+                  }`}
+                  title={bookings.some(booking => booking.status === 'Confirmed' && !booking.is_checked_in) 
+                    ? 'Cannot deactivate account while you have active bookings' 
+                    : 'Deactivate Account'}
                 >
                   <FaPowerOff className="text-base" /> <span>Deactivate Account</span>
                 </button>
@@ -851,6 +921,7 @@ const UserDashboard = () => {
         </div>
       )}
 
+      {/* Deactivate Account Confirmation Modal */}
       {showDeleteConfirm && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="bg-white p-8 rounded-2xl shadow-2xl max-w-md w-full mx-4 transform transition-all">
@@ -861,52 +932,49 @@ const UserDashboard = () => {
               <h3 className="text-2xl font-bold text-gray-800">Deactivate Account</h3>
             </div>
             
-            {bookings.some(booking => booking.status === 'Confirmed' && !booking.is_checked_in) ? (
+            <div className="bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded-r mb-6">
+              <div className="flex items-center">
+                <FaExclamationTriangle className="text-yellow-500 text-lg mr-3" />
+                <p className="text-sm text-yellow-700">
+                  {bookings.some(booking => booking.status === 'Confirmed' && !booking.is_checked_in)
+                    ? "You cannot deactivate your account while you have active bookings. Please cancel or complete your bookings first."
+                    : "Warning: This action cannot be undone directly. You will need to contact support to reactivate your account."}
+                </p>
+              </div>
+            </div>
+
+            {!bookings.some(booking => booking.status === 'Confirmed' && !booking.is_checked_in) && (
               <>
-                <div className="bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded-r mb-6">
-                  <div className="flex items-center">
-                    <FaExclamationTriangle className="text-yellow-500 text-lg mr-3" />
-                    <p className="text-sm text-yellow-700">
-                      You cannot deactivate your account while you have active bookings. Please cancel or complete your bookings first.
-                    </p>
-                  </div>
-                </div>
-                <div className="flex justify-end">
-                  <button
-                    onClick={() => setShowDeleteConfirm(false)}
-                    className="px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-all duration-200 shadow-sm hover:shadow-md transform hover:-translate-y-0.5 text-sm"
-                  >
-                    Close
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <p className="text-gray-600 mb-6">
+                <div className="text-gray-600 mb-4">
                   Are you sure you want to deactivate your account? This will:
-                  <ul className="list-disc ml-6 mt-2 space-y-1">
-                    <li>Hide your profile from the platform</li>
-                    <li>Cancel any pending bookings</li>
-                    <li>Prevent new bookings</li>
-                  </ul>
+                </div>
+                <ul className="list-disc ml-6 mb-6 space-y-1">
+                  <li>Hide your profile from the platform</li>
+                  <li>Cancel any pending bookings</li>
+                  <li>Prevent new bookings</li>
+                </ul>
+                <p className="text-gray-600 mb-6">
                   You can reactivate your account by contacting support.
                 </p>
-                <div className="flex justify-end space-x-4">
-                  <button
-                    onClick={() => setShowDeleteConfirm(false)}
-                    className="px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-all duration-200 shadow-sm hover:shadow-md transform hover:-translate-y-0.5 text-sm"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleDeleteAccount}
-                    className="px-4 py-2 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-xl hover:from-orange-600 hover:to-orange-700 transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 text-sm"
-                  >
-                    Deactivate Account
-                  </button>
-                </div>
               </>
             )}
+
+            <div className="flex justify-end space-x-4">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-all duration-200 shadow-sm hover:shadow-md transform hover:-translate-y-0.5 text-sm"
+              >
+                {bookings.some(booking => booking.status === 'Confirmed' && !booking.is_checked_in) ? 'Close' : 'Cancel'}
+              </button>
+              {!bookings.some(booking => booking.status === 'Confirmed' && !booking.is_checked_in) && (
+                <button
+                  onClick={handleDeleteAccount}
+                  className="px-4 py-2 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-xl hover:from-orange-600 hover:to-orange-700 transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 text-sm"
+                >
+                  Deactivate Account
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -935,7 +1003,6 @@ const UserDashboard = () => {
                   size={200}
                   level="M"
                   includeMargin={true}
-                  renderAs="svg"
                 />
               </div>
               <div className="mt-6 text-center space-y-2">
@@ -949,6 +1016,94 @@ const UserDashboard = () => {
                 className="mt-6 px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors duration-200 flex items-center space-x-2"
               >
                 <span>Download PDF</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Download Data Modal */}
+      {showDownloadModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-white p-8 rounded-2xl shadow-2xl max-w-md w-full mx-4 transform transition-all">
+            <div className="flex items-center space-x-4 mb-6">
+              <div className="bg-green-100 p-3 rounded-full">
+                <FaDownload className="text-2xl text-green-600" />
+              </div>
+              <h3 className="text-2xl font-bold text-gray-800">Download My Data</h3>
+            </div>
+
+            <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-r mb-6">
+              <div className="flex items-center">
+                <FaFileAlt className="text-blue-500 text-lg mr-3" />
+                <p className="text-sm text-blue-700">
+                  Your data export will include:
+                </p>
+              </div>
+              <ul className="mt-2 ml-8 list-disc text-sm text-blue-700">
+                <li>Personal profile information</li>
+                <li>Booking history and queue records</li>
+                <li>Message history with organizations</li>
+              </ul>
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Select Format</label>
+              <div className="grid grid-cols-2 gap-4">
+                <button
+                  onClick={() => setDownloadFormat('json')}
+                  className={`p-4 rounded-xl border-2 transition-all duration-200 ${
+                    downloadFormat === 'json'
+                      ? 'border-green-500 bg-green-50 text-green-700'
+                      : 'border-gray-200 hover:border-gray-300 text-gray-600'
+                  }`}
+                >
+                  <div className="text-center">
+                    <FaFileAlt className="mx-auto text-xl mb-2" />
+                    <div className="font-medium">JSON</div>
+                    <div className="text-xs mt-1">Complete data structure</div>
+                  </div>
+                </button>
+                <button
+                  onClick={() => setDownloadFormat('csv')}
+                  className={`p-4 rounded-xl border-2 transition-all duration-200 ${
+                    downloadFormat === 'csv'
+                      ? 'border-green-500 bg-green-50 text-green-700'
+                      : 'border-gray-200 hover:border-gray-300 text-gray-600'
+                  }`}
+                >
+                  <div className="text-center">
+                    <FaFileAlt className="mx-auto text-xl mb-2" />
+                    <div className="font-medium">CSV</div>
+                    <div className="text-xs mt-1">Spreadsheet format</div>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            <div className="flex justify-end space-x-4">
+              <button
+                onClick={() => setShowDownloadModal(false)}
+                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-all duration-200 shadow-sm hover:shadow-md transform hover:-translate-y-0.5 text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDownloadData(downloadFormat)}
+                disabled={isDownloading}
+                className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-xl hover:from-green-600 hover:to-green-700 transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isDownloading ? (
+                  <>
+                    <FaSpinner className="animate-spin text-base" />
+                    <span>Downloading...</span>
+                  </>
+                ) : (
+                  <>
+                    <FaDownload className="text-base" />
+                    <span>Download</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
-import { FaSignOutAlt, FaBuilding, FaEdit, FaCheck, FaTimes, FaEye, FaEyeSlash, FaTrash, FaClock, FaSpinner, FaCalendar, FaQrcode, FaExclamationTriangle, FaComments, FaInfoCircle, FaPlus } from 'react-icons/fa';
+import { FaSignOutAlt, FaBuilding, FaEdit, FaCheck, FaTimes, FaEye, FaEyeSlash, FaTrash, FaClock, FaSpinner, FaCalendar, FaQrcode, FaExclamationTriangle, FaComments, FaInfoCircle, FaPlus, FaExclamationCircle } from 'react-icons/fa';
 import { format } from 'date-fns';
 import DatePicker from 'react-datepicker';
 import "react-datepicker/dist/react-datepicker.css";
@@ -1085,6 +1085,14 @@ const OrganizationDashboard = () => {
                 </div>
               </div>
               <div className="mt-6">
+                {timeSlotError && (
+                  <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200">
+                    <p className="text-sm text-red-600 flex items-center">
+                      <FaExclamationCircle className="mr-2" />
+                      {timeSlotError}
+                    </p>
+                  </div>
+                )}
                 <button
                   type="submit"
                   disabled={isCreatingTimeSlot}
